@@ -199,16 +199,16 @@ class MemoryCore:
             if new_user != user_message:
                 return new_user
 
-        # 2. 异步触发整理（不阻塞对话）
+        return None
+
+    async def trigger_capture(self, user_id: str, text: str):
+        """触发记忆整理（由 on_llm_response 调用）"""
         try:
-            import asyncio
             asyncio.ensure_future(
-                self.consolidation_manager.on_message(user_id, message_text)
+                self.consolidation_manager.on_message(user_id, text)
             )
         except Exception:
             pass
-
-        return None
 
     async def _handle_command(self, user_id: str, message: str):
         """处理指令"""

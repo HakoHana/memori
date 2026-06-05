@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.api import logger
@@ -55,8 +57,28 @@ class MemoryPlugin(Star):
         await self.on_astrbot_llm_request(event)
 
     async def on_message(self, event: AstrMessageEvent):
-        """消息回调（如果 llm_request 没有捕获到）"""
-        await self.on_astrbot_llm_request(event)
+        """消息回调 — 仅计数，不触发整理"""
+        if self.memory_core:
+            try:
+                user_id = self.memory_core.context_provider.get_user_id(event)
+                if user_id:
+                    await self.memory_core.consolidation_manager.on_message(user_id, "")
+            except Exception:
+                pass
+
+    async def on_llm_response(self, event: AstrMessageEvent):
+        """LLM 响应后 — 触发记忆整理"""
+        if self.memory_core:
+            try:
+                # 使用 LLM 响应后的完整上下文触发整理
+                user_id = self.memory_core.context_provider.get_user_id(event)
+                if user_id:
+                    text = self.memory_core.context_provider.get_conversation_text(event)
+                    asyncio.ensure_future(
+                        self.memory_core.consolidation_manager.on_message(user_id, text)
+                    )
+            except Exception as e:
+                logger.error(f"[Memory] on_llm_response error: {e}")
 
     async def on_unload(self):
         """插件卸载时清理"""

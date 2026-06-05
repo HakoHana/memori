@@ -27,6 +27,60 @@ class AtomStatus(str, Enum):
     FORGOTTEN = "forgotten"     # 遗忘
 
 
+class DecayType(str, Enum):
+    """衰减类型"""
+    EXPONENTIAL = "exponential"  # 指数衰减（默认）
+    LINEAR = "linear"            # 线性衰减
+    STEP = "step"                # 阶梯衰减（到 TTL 直接降为 0）
+
+
+# 每种原子类型的默认 TTL 和衰减类型
+_ATOM_TTL_CONFIG = {
+    AtomType.EPISODIC:   {"ttl_days": 30,  "decay": DecayType.EXPONENTIAL},
+    AtomType.FACTUAL:    {"ttl_days": 180, "decay": DecayType.EXPONENTIAL},
+    AtomType.PREFERENCE: {"ttl_days": 60,  "decay": DecayType.EXPONENTIAL},
+    AtomType.PLANNED:    {"ttl_days": 7,   "decay": DecayType.STEP},
+    AtomType.RELATIONAL: {"ttl_days": 90,  "decay": DecayType.LINEAR},
+    AtomType.UNKNOWN:    {"ttl_days": 30,  "decay": DecayType.EXPONENTIAL},
+}
+
+
+def compute_expires_at(atom_type: AtomType, importance: float, ttl_days: float = 0) -> tuple[float, DecayType]:
+    """计算过期时间和衰减类型
+
+    Returns:
+        (expires_at, decay_type)
+    """
+    cfg = _ATOM_TTL_CONFIG.get(atom_type, _ATOM_TTL_CONFIG[AtomType.UNKNOWN])
+
+    # 基础 TTL
+    base_ttl = cfg["ttl_days"] if ttl_days <= 0 else ttl_days
+
+    # 重要度因子：重要的事情 TTL 更长
+    importance_factor = 0.5 + max(0.0, min(1.0, importance))
+    actual_ttl = base_ttl * importance_factor
+
+    expires_at = time.time() + actual_ttl * 86400
+    return expires_at, cfg["decay"]
+
+
+def compute_decay_score(
+    decay_type: DecayType, ttl_days: float, age_days: float
+) -> float:
+    """计算衰减分数 (0~1)，用于热温冷分层"""
+    effective_ttl = max(1.0, ttl_days)
+    age_days = max(0.0, age_days)
+
+    if decay_type == DecayType.LINEAR:
+        return max(0.0, 1.0 - age_days / effective_ttl)
+    if decay_type == DecayType.STEP:
+        return 1.0 if age_days <= effective_ttl else 0.05
+
+    # EXPONENTIAL: 半衰期 = TTL/2
+    half_life = effective_ttl / 2.0
+    return math.exp(-math.log(2) * age_days / max(0.5, half_life))
+
+
 @dataclass(slots=True)
 class MemoryAtom:
     """记忆原子 — 结构化事实的最小单元"""
@@ -41,6 +95,8 @@ class MemoryAtom:
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float | None = None
     ttl_days: float = 30.0
+    expires_at: float = 0.0       # 过期时间戳（插入时自动计算）
+    decay_type: DecayType = DecayType.EXPONENTIAL  # 衰减类型
     status: AtomStatus = AtomStatus.ACTIVE
     session_id: str | None = None
     diary_ref: str | None = None
@@ -48,13 +104,24 @@ class MemoryAtom:
     metadata: dict[str, Any] = field(default_factory=dict)
     atom_id: int = 0                   # 数据库 ID，插入后填充
 
+    def prepare_insert(self):
+        """插入前准备：计算 expires_at 和 decay_type"""
+        self.expires_at, self.decay_type = compute_expires_at(
+            self.atom_type, self.importance, self.ttl_days
+        )
+
     @property
     def is_expired(self) -> bool:
-        """检查是否超过 TTL"""
-        if self.ttl_days <= 0:
+        """检查是否超过过期时间"""
+        if self.expires_at <= 0:
             return False
-        age = time.time() - self.created_at
-        return age > self.ttl_days * 86400
+        return time.time() >= self.expires_at
+
+    @property
+    def decay_score(self) -> float:
+        """当前衰减分数 (0~1)"""
+        age_days = (time.time() - self.created_at) / 86400
+        return compute_decay_score(self.decay_type, self.ttl_days, age_days)
 
 
 @dataclass(slots=True)

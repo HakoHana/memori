@@ -11,6 +11,8 @@ from ..storage.atom_store import AtomStore
 from ..storage.diary_store import DiaryStore
 from ..storage.persona_store import PersonaStore
 from ..storage.state_store import StateStore
+from ..storage.graph_store import GraphStore
+from ..core.graph_engine import GraphEngine
 from .adapters import LLMProvider, AstrBotLLMProvider, AstrBotContextProvider
 from .capturer import Capturer
 from .persona_engine import PersonaEngine
@@ -47,6 +49,8 @@ class MemoryCore:
         self.injector: MemoryInjector | None = None
         self.consolidation_manager: ConsolidationManager | None = None
         self.command_handler: CommandHandler | None = None
+        self.graph_store: GraphStore | None = None
+        self.graph_engine: GraphEngine | None = None
 
     async def initialize(self):
         """初始化所有模块"""
@@ -68,18 +72,28 @@ class MemoryCore:
         self.diary_store = DiaryStore(db_path)
         self.persona_store = PersonaStore(str(self.data_dir))
         self.state_store = StateStore(db_path)
+        self.graph_store = GraphStore(db_path)
 
         await self.atom_store.initialize()
         await self.diary_store.initialize()
         await self.state_store.initialize()
+        await self.graph_store.initialize()
 
-        # 3. 核心业务模块
+        # 3. 图谱引擎
+        self.graph_engine = GraphEngine(
+            graph_store=self.graph_store,
+            atom_store=self.atom_store,
+            diary_store=self.diary_store,
+        )
+
+        # 4. 核心业务模块
         self.capturer = Capturer(
             llm_provider=self.llm_provider,
             diary_store=self.diary_store,
             atom_store=self.atom_store,
             prompts_dir=prompts_dir,
             config=self.config,
+            on_atoms_created=self.graph_engine.index_atom,
         )
         self.persona_engine = PersonaEngine(
             llm_provider=self.llm_provider,
@@ -106,7 +120,15 @@ class MemoryCore:
         )
         await self.consolidation_manager.initialize()
 
-        # 5. 指令处理器
+        # 5. WebUI API
+        from .page_api import PageApi
+        self.page_api = PageApi(self)
+        try:
+            self.page_api.register_routes(self.plugin_context)
+        except Exception as e:
+            logger.warning(f"[Memory] 注册 WebUI API 失败: {e}")
+
+        # 6. 指令处理器
         self.command_handler = CommandHandler(
             diary_store=self.diary_store,
             atom_store=self.atom_store,

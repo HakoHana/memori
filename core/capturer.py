@@ -33,12 +33,14 @@ class Capturer:
         atom_store: AtomStore,
         prompts_dir: str,
         config: dict[str, Any] | None = None,
+        on_atoms_created: callable = None,  # 回调：原子创建后通知图谱引擎
     ):
         self.llm = llm_provider
         self.diary_store = diary_store
         self.atom_store = atom_store
         self.config = config or {}
         self.max_diary_tokens = self.config.get("max_diary_tokens", 500)
+        self.on_atoms_created = on_atoms_created
 
         # 加载 prompt 模板
         self._prompts: dict[str, str] = {}
@@ -87,10 +89,20 @@ class Capturer:
 
         # 2. 提取原子
         atoms = await self._extract_atoms(diary_content, user_id, today)
+        for atom in atoms:
+            atom.prepare_insert()  # 计算 expires_at 和 decay_type
         if atoms:
             ids = await self.atom_store.insert_many(atoms)
             for atom, aid in zip(atoms, ids):
                 atom.atom_id = aid
+
+            # 通知图谱引擎
+            if self.on_atoms_created:
+                try:
+                    for atom in atoms:
+                        await self.on_atoms_created(atom)
+                except Exception:
+                    pass
 
         return CaptureResult(
             wrote_diary=bool(diary_content),

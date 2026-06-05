@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from ..models.memory_atom import MemoryAtom, AtomType, AtomStatus
+from ..models.memory_atom import MemoryAtom, AtomType, AtomStatus, DecayType
 
 
 class AtomStore:
@@ -46,6 +46,8 @@ class AtomStore:
                     created_at REAL NOT NULL,
                     last_accessed_at REAL,
                     ttl_days REAL NOT NULL DEFAULT 30.0,
+                    expires_at REAL NOT NULL DEFAULT 0.0,
+                    decay_type TEXT NOT NULL DEFAULT 'exponential',
                     status TEXT NOT NULL DEFAULT 'active',
                     session_id TEXT,
                     diary_ref TEXT,
@@ -60,23 +62,40 @@ class AtomStore:
                 USING fts5(content, atom_id UNINDEXED, user_id UNINDEXED, tokenize='unicode61')
             """)
 
-            # 索引
+            # ── 复合索引（匹配实际查询模式）──
             for idx in [
-                "CREATE INDEX IF NOT EXISTS idx_atoms_user ON memory_atoms(user_id)",
-                "CREATE INDEX IF NOT EXISTS idx_atoms_type ON memory_atoms(atom_type)",
-                "CREATE INDEX IF NOT EXISTS idx_atoms_status ON memory_atoms(status)",
-                "CREATE INDEX IF NOT EXISTS idx_atoms_importance ON memory_atoms(importance)",
-                "CREATE INDEX IF NOT EXISTS idx_atoms_diary_date ON memory_atoms(diary_date)",
+                # ① 按用户查活跃原子，按日期排序（get_by_user, /日记 列表）
+                "CREATE INDEX IF NOT EXISTS idx_atoms_user_status_date "
+                "ON memory_atoms(user_id, status, diary_date)",
+
+                # ② 按用户查活跃原子，按重要度降序（召回时取最重要的）
+                "CREATE INDEX IF NOT EXISTS idx_atoms_user_status_imp "
+                "ON memory_atoms(user_id, status, importance DESC)",
+
+                # ③ 按用户+类型分组（统计、展示分组）
+                "CREATE INDEX IF NOT EXISTS idx_atoms_user_type "
+                "ON memory_atoms(user_id, atom_type)",
+
+                # ④ 预留：TTL 过期清理（以后衰减用）
+                "CREATE INDEX IF NOT EXISTS idx_atoms_status_ttl "
+                "ON memory_atoms(status, ttl_days)",
+
+                # ⑤ FTS5 搜索时按用户过滤
+                "CREATE INDEX IF NOT EXISTS idx_atoms_user "
+                "ON memory_atoms(user_id)",
             ]:
                 await db.execute(idx)
 
-            # 兼容老数据库：添加缺失的 diary_snippet 列
-            try:
-                await db.execute(
-                    "ALTER TABLE memory_atoms ADD COLUMN diary_snippet TEXT DEFAULT ''"
-                )
-            except Exception:
-                pass  # 列已存在
+            # 兼容老数据库：添加缺失的列
+            for col_def in [
+                "ALTER TABLE memory_atoms ADD COLUMN diary_snippet TEXT DEFAULT ''",
+                "ALTER TABLE memory_atoms ADD COLUMN expires_at REAL NOT NULL DEFAULT 0.0",
+                "ALTER TABLE memory_atoms ADD COLUMN decay_type TEXT NOT NULL DEFAULT 'exponential'",
+            ]:
+                try:
+                    await db.execute(col_def)
+                except Exception:
+                    pass  # 列已存在
 
             await db.commit()
 
@@ -87,15 +106,16 @@ class AtomStore:
                 INSERT INTO memory_atoms
                 (user_id, diary_date, atom_type, content, entities,
                  importance, confidence, access_count, created_at,
-                 last_accessed_at, ttl_days, status, session_id, diary_ref,
-                 diary_snippet, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 last_accessed_at, ttl_days, expires_at, decay_type, status,
+                 session_id, diary_ref, diary_snippet, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 atom.user_id, atom.diary_date, atom.atom_type.value, atom.content,
                 json.dumps(atom.entities, ensure_ascii=False),
                 atom.importance, atom.confidence, atom.access_count,
                 atom.created_at, atom.last_accessed_at, atom.ttl_days,
-                atom.status.value, atom.session_id, atom.diary_ref,
+                atom.expires_at, atom.decay_type.value, atom.status.value,
+                atom.session_id, atom.diary_ref,
                 atom.diary_snippet,
                 json.dumps(atom.metadata, ensure_ascii=False),
             ))
@@ -119,15 +139,16 @@ class AtomStore:
                     INSERT INTO memory_atoms
                     (user_id, diary_date, atom_type, content, entities,
                      importance, confidence, access_count, created_at,
-                     last_accessed_at, ttl_days, status, session_id, diary_ref,
-                     diary_snippet, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_accessed_at, ttl_days, expires_at, decay_type, status,
+                     session_id, diary_ref, diary_snippet, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     atom.user_id, atom.diary_date, atom.atom_type.value, atom.content,
                     json.dumps(atom.entities, ensure_ascii=False),
                     atom.importance, atom.confidence, atom.access_count,
                     atom.created_at, atom.last_accessed_at, atom.ttl_days,
-                    atom.status.value, atom.session_id, atom.diary_ref,
+                    atom.expires_at, atom.decay_type.value, atom.status.value,
+                    atom.session_id, atom.diary_ref,
                     atom.diary_snippet,
                     json.dumps(atom.metadata, ensure_ascii=False),
                 ))
@@ -266,9 +287,11 @@ class AtomStore:
             created_at=row[9],
             last_accessed_at=row[10],
             ttl_days=row[11],
-            status=AtomStatus(row[12]),
-            session_id=row[13],
-            diary_ref=row[14],
-            diary_snippet=row[15] or "",
-            metadata=json.loads(row[18]) if isinstance(row[18], str) and row[18] else {},
+            expires_at=row[12] or 0.0,
+            decay_type=DecayType(row[13]) if row[13] else DecayType.EXPONENTIAL,
+            status=AtomStatus(row[14]),
+            session_id=row[15],
+            diary_ref=row[16],
+            diary_snippet=row[17] or "",
+            metadata=json.loads(row[20]) if len(row) > 20 and isinstance(row[20], str) and row[20] else {},
         )

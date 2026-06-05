@@ -1,0 +1,95 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff;
+  --danger: #f85149; --success: #3fb950;
+  --radius: 8px; --space: 16px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+#app { display: flex; height: 100vh; }
+
+/* Sidebar */
+.sidebar { width: 200px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.brand { padding: 20px var(--space); font-size: 1.3em; font-weight: 700; border-bottom: 1px solid var(--border); }
+.sidebar nav { padding: 8px; flex: 1; }
+.nav-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; background: none; border: none; color: var(--text2); cursor: pointer; border-radius: 6px; font-size: 0.9em; text-align: left; }
+.nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+.nav-item.active { background: rgba(88,166,255,0.15); color: var(--accent); }
+.nav-icon { font-size: 1.1em; }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.page { display: none; flex-direction: column; height: 100%; padding: var(--space); overflow-y: auto; }
+.page.active { display: flex; }
+.page header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space); flex-shrink: 0; }
+.page header h2 { font-size: 1.2em; }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+
+/* Inputs */
+input, select, textarea, button {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 12px; border-radius: 6px; font-size: 0.85em;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+button { cursor: pointer; }
+button:hover { background: rgba(255,255,255,0.08); }
+.count-badge { background: var(--accent); color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 0.8em; }
+
+/* Graph page */
+.graph-wrap { display: flex; flex: 1; gap: var(--space); min-height: 0; }
+.canvas-container { flex: 1; background: var(--surface); border-radius: var(--radius); overflow: hidden; position: relative; }
+#graph-svg { width: 100%; height: 100%; cursor: grab; }
+#graph-svg:active { cursor: grabbing; }
+.graph-side { width: 280px; background: var(--surface); border-radius: var(--radius); padding: var(--space); overflow-y: auto; flex-shrink: 0; }
+.detail-placeholder { color: var(--text2); text-align: center; padding: 40px 0; }
+.stats-bar { display: flex; gap: 12px; margin-bottom: 8px; flex-shrink: 0; }
+.stats-bar span { background: var(--surface); padding: 4px 12px; border-radius: 6px; font-size: 0.85em; color: var(--text2); }
+.legend { display: flex; gap: 16px; padding: 8px 0; flex-shrink: 0; }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.8em; color: var(--text2); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* Memories */
+.mem-list { flex: 1; overflow-y: auto; }
+.mem-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px var(--space); margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: border-color 0.2s; }
+.mem-card:hover { border-color: var(--accent); }
+.mem-type { font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(88,166,255,0.15); white-space: nowrap; }
+.mem-content { flex: 1; }
+.mem-content .c { word-break: break-word; line-height: 1.4; }
+.mem-content .m { font-size: 0.8em; color: var(--text2); margin-top: 4px; }
+.mem-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.mem-actions button { padding: 4px 8px; font-size: 0.8em; }
+.pagination { display: flex; gap: 4px; justify-content: center; padding: 12px 0; flex-shrink: 0; }
+.pagination button { padding: 4px 10px; min-width: 32px; }
+.pagination .current { background: var(--accent); border-color: var(--accent); }
+
+/* Diaries */
+.diary-layout { display: flex; flex: 1; gap: var(--space); min-height: 0; }
+.diary-list { width: 160px; flex-shrink: 0; overflow-y: auto; }
+.diary-list button { display: block; width: 100%; text-align: left; padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; background: none; border: 1px solid transparent; color: var(--text2); }
+.diary-list button:hover { border-color: var(--border); color: var(--text); }
+.diary-list button.active { border-color: var(--accent); color: var(--accent); }
+.diary-editor { flex: 1; display: flex; flex-direction: column; }
+#diary-editor { flex: 1; resize: none; font-family: inherit; line-height: 1.6; min-height: 300px; }
+
+/* Persona */
+#persona-editor { flex: 1; resize: none; font-family: inherit; line-height: 1.6; min-height: 400px; }
+
+/* System */
+.sys-cards { display: flex; gap: var(--space); margin-bottom: var(--space); flex-wrap: wrap; }
+.sys-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space); min-width: 120px; text-align: center; }
+.sys-card .num { font-size: 2em; font-weight: 700; color: var(--accent); }
+.sys-card .label { font-size: 0.85em; color: var(--text2); margin-top: 4px; }
+.sys-section { margin-top: var(--space); }
+.log-box { background: #000; border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space); margin-top: 8px; max-height: 200px; overflow-y: auto; font-size: 0.8em; color: var(--success); }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: 600px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: var(--space); border-bottom: 1px solid var(--border); }
+.modal-header button { background: none; border: none; font-size: 1.2em; }
+.modal-body { padding: var(--space); overflow-y: auto; }
+.modal-body .field { margin-bottom: 12px; }
+.modal-body label { display: block; font-size: 0.85em; color: var(--text2); margin-bottom: 4px; }
+.modal-body input, .modal-body select, .modal-body textarea { width: 100%; }
+.modal-body textarea { min-height: 100px; resize: vertical; font-family: inherit; }
+.modal-footer { padding: var(--space); border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }

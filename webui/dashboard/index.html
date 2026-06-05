@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">🧠 Memory</div>
+    <nav>
+      <button class="nav-item active" data-page="graph">
+        <span class="nav-icon">🕸</span> 知识图谱
+      </button>
+      <button class="nav-item" data-page="memories">
+        <span class="nav-icon">🧬</span> 记忆管理
+      </button>
+      <button class="nav-item" data-page="diaries">
+        <span class="nav-icon">📔</span> 日记
+      </button>
+      <button class="nav-item" data-page="persona">
+        <span class="nav-icon">👤</span> 用户画像
+      </button>
+      <button class="nav-item" data-page="system">
+        <span class="nav-icon">⚙️</span> 系统
+      </button>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <!-- Graph Page -->
+    <section class="page active" id="page-graph">
+      <header><h2>🕸 知识图谱</h2>
+        <div class="toolbar">
+          <input id="graph-query" placeholder="搜索节点...">
+          <button onclick="searchGraph()">搜索</button>
+          <button onclick="loadGraphOverview()">概览</button>
+        </div>
+      </header>
+      <div class="stats-bar" id="graph-stats"></div>
+      <div class="graph-wrap">
+        <div class="canvas-container" id="canvas-container">
+          <svg id="graph-svg"></svg>
+        </div>
+        <div class="graph-side" id="graph-detail">
+          <div class="detail-placeholder">点击节点查看详情</div>
+        </div>
+      </div>
+      <div class="legend" id="graph-legend"></div>
+    </section>
+
+    <!-- Memories Page -->
+    <section class="page" id="page-memories">
+      <header><h2>🧬 记忆管理</h2>
+        <div class="toolbar">
+          <input id="mem-search" placeholder="搜索..." oninput="loadMemories()">
+          <select id="mem-type-filter" onchange="loadMemories()">
+            <option value="">全部类型</option>
+            <option value="episodic">📌 事件</option>
+            <option value="factual">📖 知识</option>
+            <option value="preference">💕 偏好</option>
+            <option value="planned">🎯 约定</option>
+            <option value="relational">👥 关系</option>
+          </select>
+          <span id="mem-count" class="count-badge"></span>
+        </div>
+      </header>
+      <div class="mem-list" id="mem-list"></div>
+      <div class="pagination" id="mem-pagination"></div>
+    </section>
+
+    <!-- Diaries Page -->
+    <section class="page" id="page-diaries">
+      <header><h2>📔 日记</h2>
+        <div class="toolbar">
+          <select id="diary-month" onchange="loadDiaryDates()"></select>
+          <button onclick="saveDiary()">💾 保存</button>
+        </div>
+      </header>
+      <div class="diary-layout">
+        <div class="diary-list" id="diary-list"></div>
+        <div class="diary-editor">
+          <textarea id="diary-editor" placeholder="选择日期查看/编辑日记..."></textarea>
+          <input id="diary-date-hidden" type="hidden">
+        </div>
+      </div>
+    </section>
+
+    <!-- Persona Page -->
+    <section class="page" id="page-persona">
+      <header><h2>👤 用户画像</h2>
+        <button onclick="savePersona()">💾 保存</button>
+      </header>
+      <textarea id="persona-editor" placeholder="加载中..."></textarea>
+    </section>
+
+    <!-- System Page -->
+    <section class="page" id="page-system">
+      <header><h2>⚙️ 系统</h2></header>
+      <div class="sys-cards" id="sys-stats"></div>
+      <div class="sys-section">
+        <h3>📥 从 LivingMemory 导入</h3>
+        <div class="toolbar">
+          <input id="import-path" value="/home/hako/data/plugin_data/astrbot_plugin_livingmemory/livingmemory.db" style="flex:1">
+          <button onclick="runImport()">导入</button>
+        </div>
+        <pre id="import-output" class="log-box"></pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-overlay" id="modal" style="display:none" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header"><h3 id="modal-title">编辑记忆</h3><button onclick="closeModal()">✕</button></div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

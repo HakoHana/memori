@@ -4,26 +4,14 @@ from __future__ import annotations
 
 import json
 import time
-from contextlib import asynccontextmanager
 from datetime import datetime
 
-import aiosqlite
+from .base_store import BaseDbStore
 
 
-class DiaryStore:
+class DiaryStore(BaseDbStore):
     """日记存储：全部存在 SQLite 的 diary_entries 表中"""
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-
-    @asynccontextmanager
-    async def _connect(self):
-        db = await aiosqlite.connect(self.db_path)
-        try:
-            await db.execute("PRAGMA journal_mode = WAL")
-            yield db
-        finally:
-            await db.close()
+    # 默认 PRAGMA 够用，不需要额外设置
 
     async def initialize(self):
         """创建 diary_entries 表"""
@@ -128,6 +116,27 @@ class DiaryStore:
                 "SELECT DISTINCT user_id FROM diary_entries"
             )
         return [r[0] for r in rows]
+
+    async def upsert(self, user_id: str, date_str: str, content: str) -> bool:
+        """插入或更新日记（page_api 用）"""
+        import time
+        now = time.time()
+        async with self._connect() as db:
+            row = await db.execute_fetchall(
+                "SELECT id FROM diary_entries WHERE user_id=? AND date=?", (user_id, date_str)
+            )
+            if row:
+                await db.execute(
+                    "UPDATE diary_entries SET content=?, updated_at=? WHERE id=?",
+                    (content, now, row[0][0]),
+                )
+            else:
+                await db.execute(
+                    "INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (user_id, date_str, content, now, now),
+                )
+            await db.commit()
+            return True
 
     async def update_metadata(self, user_id: str, date_str: str, **kwargs):
         """更新日记的元数据（话题、情感等）"""

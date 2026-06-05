@@ -2,28 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from contextlib import asynccontextmanager
-
-import aiosqlite
-
 from ..models.memory_atom import PersistedSessionState
+from .base_store import BaseDbStore
 
 
-class StateStore:
+class StateStore(BaseDbStore):
     """保存/恢复每个用户的 ConsolidationManager 状态"""
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-
-    @asynccontextmanager
-    async def _connect(self):
-        db = await aiosqlite.connect(self.db_path)
-        try:
-            await db.execute("PRAGMA journal_mode = WAL")
-            yield db
-        finally:
-            await db.close()
 
     async def initialize(self):
         async with self._connect() as db:

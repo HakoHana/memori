@@ -4,30 +4,15 @@ from __future__ import annotations
 
 import json
 import time
-from contextlib import asynccontextmanager
 from typing import Any
 
-import aiosqlite
-
 from ..models.memory_atom import MemoryAtom, AtomType, AtomStatus, DecayType
+from .base_store import BaseDbStore
 
 
-class AtomStore:
+class AtomStore(BaseDbStore):
     """原子存储：SQLite + FTS5 全文搜索"""
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-
-    @asynccontextmanager
-    async def _connect(self):
-        db = await aiosqlite.connect(self.db_path)
-        try:
-            await db.execute("PRAGMA journal_mode = WAL")
-            await db.execute("PRAGMA busy_timeout = 5000")
-            await db.execute("PRAGMA foreign_keys = ON")
-            yield db
-        finally:
-            await db.close()
+    _pragmas = ["PRAGMA journal_mode = WAL", "PRAGMA foreign_keys = ON"]
 
     async def initialize(self):
         """建表 + FTS5 索引"""
@@ -256,6 +241,120 @@ class AtomStore:
             )
         return [r[0] for r in rows]
 
+    async def update_atom(self, atom_id: int, **fields) -> bool:
+        """更新原子指定字段（page_api 用）"""
+        allowed = {"content", "atom_type", "importance", "status"}
+        sets = []
+        vals = []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.append(atom_id)
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE memory_atoms SET {', '.join(sets)} WHERE id = ?", vals
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def get_timeline(
+        self, user_id: str, page: int = 1, page_size: int = 20
+    ) -> dict:
+        """按日期分组获取记忆时间线"""
+        async with self._connect() as db:
+            dates = await db.execute_fetchall("""
+                SELECT diary_date, COUNT(*) as cnt,
+                       ROUND(AVG(importance), 2) as avg_imp,
+                       SUM(access_count) as total_access
+                FROM memory_atoms WHERE user_id=? AND status='active'
+                GROUP BY diary_date ORDER BY diary_date DESC
+                LIMIT ? OFFSET ?
+            """, (user_id, page_size, (page - 1) * page_size))
+
+            total = (await db.execute_fetchall(
+                "SELECT COUNT(DISTINCT diary_date) FROM memory_atoms WHERE user_id=? AND status='active'",
+                (user_id,)
+            ))[0][0]
+
+            result = []
+            for d in dates:
+                date_str, cnt, avg_imp, acc = d
+                # 取这条日记的前3条原子作为预览
+                atoms = await db.execute_fetchall("""
+                    SELECT id, content, atom_type, importance, diary_snippet
+                    FROM memory_atoms WHERE user_id=? AND diary_date=? AND status='active'
+                    ORDER BY importance DESC LIMIT 3
+                """, (user_id, date_str))
+                result.append({
+                    "date": date_str,
+                    "atom_count": cnt,
+                    "avg_importance": avg_imp,
+                    "total_access": acc or 0,
+                    "atoms_preview": [
+                        {"id": a[0], "content": a[1][:100], "type": a[2], "importance": a[3], "snippet": a[4] or ""}
+                        for a in atoms
+                    ],
+                })
+        return {"total": total, "page": page, "page_size": page_size, "items": result}
+
+    async def get_day_atoms(self, user_id: str, date: str) -> list[dict]:
+        """获取某天的所有原子（page_api 用）"""
+        import json
+        async with self._connect() as db:
+            rows = await db.execute_fetchall("""
+                SELECT id, content, atom_type, importance, confidence, access_count,
+                       diary_snippet, entities, status, created_at
+                FROM memory_atoms WHERE user_id=? AND diary_date=? AND status='active'
+                ORDER BY importance DESC
+            """, (user_id, date))
+        return [
+            {"id": r[0], "content": r[1], "type": r[2], "importance": r[3],
+             "confidence": r[4], "access_count": r[5], "snippet": r[6] or "",
+             "entities": json.loads(r[7]) if isinstance(r[7], str) and r[7] else [],
+             "status": r[8]}
+            for r in rows
+        ]
+
+    # ── 列映射（按 SELECT * 顺序，用于 _row_to_atom） ──
+    COLUMNS = (
+        "id", "user_id", "diary_date", "atom_type", "content", "entities",
+        "importance", "confidence", "access_count", "created_at", "last_accessed_at",
+        "ttl_days", "status", "session_id", "diary_ref", "embedding",
+        "embedding_model", "metadata", "diary_snippet", "expires_at", "decay_type",
+    )
+
+    def _row_dict(self, row: tuple) -> dict:
+        """将数据库行转为列名字典"""
+        return dict(zip(self.COLUMNS, row))
+
+    def _row_to_atom(self, row) -> MemoryAtom:
+        """数据库行 → MemoryAtom（使用列名映射）"""
+        d = self._row_dict(row)
+        return MemoryAtom(
+            atom_id=d["id"],
+            user_id=d["user_id"],
+            diary_date=d["diary_date"],
+            atom_type=AtomType(d["atom_type"]),
+            content=d["content"],
+            entities=json.loads(d["entities"]) if isinstance(d["entities"], str) else (d["entities"] or []),
+            importance=d["importance"],
+            confidence=d["confidence"],
+            access_count=d["access_count"],
+            created_at=d["created_at"],
+            last_accessed_at=d["last_accessed_at"],
+            ttl_days=d["ttl_days"],
+            status=AtomStatus(d["status"]),
+            session_id=d["session_id"],
+            diary_ref=d["diary_ref"],
+            expires_at=d["expires_at"] or 0.0,
+            decay_type=self._parse_decay_type(d["decay_type"]),
+            diary_snippet=d["diary_snippet"] or "",
+            metadata=json.loads(d["metadata"]) if isinstance(d["metadata"], str) and d["metadata"] else {},
+        )
+
     # ── 内部工具 ──
 
     def _sanitize_fts_query(self, query: str) -> str:
@@ -272,26 +371,15 @@ class AtomStore:
         terms = cleaned.split()
         return ' AND '.join(f'"{t}"*' for t in terms if t)
 
-    def _row_to_atom(self, row) -> MemoryAtom:
-        """数据库行 → MemoryAtom"""
-        return MemoryAtom(
-            atom_id=row[0],
-            user_id=row[1],
-            diary_date=row[2],
-            atom_type=AtomType(row[3]),
-            content=row[4],
-            entities=json.loads(row[5]) if isinstance(row[5], str) else (row[5] or []),
-            importance=row[6],
-            confidence=row[7],
-            access_count=row[8],
-            created_at=row[9],
-            last_accessed_at=row[10],
-            ttl_days=row[11],
-            expires_at=row[12] or 0.0,
-            decay_type=DecayType(row[13]) if row[13] else DecayType.EXPONENTIAL,
-            status=AtomStatus(row[14]),
-            session_id=row[15],
-            diary_ref=row[16],
-            diary_snippet=row[17] or "",
-            metadata=json.loads(row[20]) if len(row) > 20 and isinstance(row[20], str) and row[20] else {},
-        )
+    def _parse_decay_type(self, raw):
+        from ..models.memory_atom import DecayType
+        if not raw:
+            return DecayType.EXPONENTIAL
+        try:
+            return DecayType(raw)
+        except (ValueError, TypeError):
+            import re
+            for dt in DecayType:
+                if dt.value in str(raw).lower():
+                    return dt
+            return DecayType.EXPONENTIAL

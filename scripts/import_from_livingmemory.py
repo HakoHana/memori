@@ -64,7 +64,7 @@ def read_livingmemory_atoms(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def convert_atom(row: dict) -> MemoryAtom:
+def convert_atom(row: dict, default_user: str = "") -> MemoryAtom:
     """将 livingmemory 的原子行转换为我们的 MemoryAtom"""
 
     # 类型映射
@@ -89,8 +89,8 @@ def convert_atom(row: dict) -> MemoryAtom:
             else:
                 user_id = session_id
     if not user_id:
-        # fallback: 使用 --default-user 参数指定的默认用户
-        user_id = args.default_user if hasattr(args, 'default_user') and args.default_user else "unknown"
+        # fallback: 使用指定的默认用户
+        user_id = default_user if default_user else "unknown"
 
     # 解析 entities
     entities = []
@@ -277,7 +277,7 @@ def main():
         return
 
     print("🔄 转换数据格式...")
-    atoms = [convert_atom(r) for r in rows]
+    atoms = [convert_atom(r, args.default_user) for r in rows]
 
     # 统计
     user_ids = set(a.user_id for a in atoms)

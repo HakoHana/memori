@@ -11,6 +11,7 @@ from ..storage.atom_store import AtomStore
 from ..storage.diary_store import DiaryStore
 from ..storage.persona_store import PersonaStore
 from ..storage.state_store import StateStore
+from astrbot.api import logger
 from ..storage.graph_store import GraphStore
 from ..core.graph_engine import GraphEngine
 from .adapters import LLMProvider, AstrBotLLMProvider, AstrBotContextProvider

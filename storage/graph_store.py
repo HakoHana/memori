@@ -3,35 +3,16 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from typing import Any
 
-import aiosqlite
-
-try:
-    from ..models.graph_models import GraphNode, GraphEdge
-    from ..models.memory_atom import compute_decay_score, DecayType
-except ImportError:
-    from models.graph_models import GraphNode, GraphEdge
-    from models.memory_atom import compute_decay_score, DecayType
+from ..models.graph_models import GraphNode, GraphEdge
+from .base_store import BaseDbStore
 
 
-class GraphStore:
+class GraphStore(BaseDbStore):
     """持久化图谱节点和边"""
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-
-    @asynccontextmanager
-    async def _connect(self):
-        db = await aiosqlite.connect(self.db_path)
-        try:
-            await db.execute("PRAGMA journal_mode = WAL")
-            await db.execute("PRAGMA busy_timeout = 10000")
-            await db.execute("PRAGMA foreign_keys = ON")
-            yield db
-        finally:
-            await db.close()
+    _pragmas = ["PRAGMA journal_mode = WAL", "PRAGMA foreign_keys = ON"]
+    _busy_timeout_ms = 10000
 
     async def initialize(self):
         async with self._connect() as db:

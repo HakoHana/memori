@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from astrbot.api import logger
 
-from ..core.memory_core import MemoryCore
+if TYPE_CHECKING:
+    from ..core.memory_core import MemoryCore
 
 
 class PageApi:
@@ -20,7 +21,7 @@ class PageApi:
     def register_routes(self, context):
         """注册所有 API 路由"""
         register = context.register_web_api
-        prefix = "/astrbot_plugin_memory/page"
+        prefix = "/Memory/page"
 
         register(f"{prefix}/stats", self.get_stats, ["GET"], "Memory stats")
         register(f"{prefix}/graph/overview", self.get_graph_overview, ["GET"], "Graph overview")
@@ -29,6 +30,8 @@ class PageApi:
         register(f"{prefix}/memories/detail", self.get_memory_detail, ["GET"], "Memory detail")
         register(f"{prefix}/memories/update", self.update_memory, ["POST"], "Update memory")
         register(f"{prefix}/memories/delete", self.delete_memory, ["POST"], "Delete memory")
+        register(f"{prefix}/memories/timeline", self.get_timeline, ["GET"], "Memory timeline")
+        register(f"{prefix}/memories/day", self.get_day_detail, ["GET"], "Memory day detail")
         register(f"{prefix}/diaries", self.list_diaries, ["GET"], "List diary dates")
         register(f"{prefix}/diary", self.get_diary, ["GET"], "Get diary content")
         register(f"{prefix}/diary/update", self.update_diary, ["POST"], "Update diary")
@@ -76,7 +79,7 @@ class PageApi:
             return self._error(str(e))
 
     async def list_memories(self):
-        """列出记忆"""
+        """列出记忆，按ID降序"""
         try:
             from quart import request
             q = request.args
@@ -92,6 +95,9 @@ class PageApi:
                 atoms = result
             if atom_type:
                 atoms = [a for a in atoms if a.atom_type.value == atom_type]
+
+            # 按ID降序
+            atoms.sort(key=lambda a: a.atom_id, reverse=True)
 
             total = len(atoms)
             offset = (page - 1) * page_size
@@ -128,21 +134,8 @@ class PageApi:
             for field in ("content", "atom_type", "importance"):
                 if field in body:
                     updates[field] = body[field]
-
-            # 直接 SQL 更新
-            import sqlite3
-            db = self.core.atom_store.db_path
-            conn = sqlite3.connect(db)
-            sets = []
-            vals = []
-            for k, v in updates.items():
-                sets.append(f"{k} = ?")
-                vals.append(v)
-            vals.append(atom_id)
-            conn.execute(f"UPDATE memory_atoms SET {', '.join(sets)} WHERE id = ?", vals)
-            conn.commit()
-            conn.close()
-            return self._ok({"updated": len(sets)})
+            ok = await self.core.atom_store.update_atom(atom_id, **updates)
+            return self._ok({"updated": ok})
         except Exception as e:
             return self._error(str(e))
 
@@ -158,20 +151,48 @@ class PageApi:
         except Exception as e:
             return self._error(str(e))
 
-    async def list_diaries(self):
-        """列出日记"""
+    async def get_timeline(self):
+        """按时间线列出所有记忆"""
         try:
             from quart import request
             q = request.args
             user_id = q.get("user_id", "Hana")
-            year = q.get("year", "")
-            month = q.get("month", "")
-            if year and month:
-                dates = await self.core.diary_store.list_dates(user_id, year, month)
-            else:
-                months = await self.core.diary_store.list_months(user_id)
-                return self._ok({"months": months})
-            return self._ok({"dates": dates})
+            page = max(1, int(q.get("page", 1)))
+            page_size = min(100, max(1, int(q.get("page_size", 20))))
+            data = await self.core.atom_store.get_timeline(user_id, page, page_size)
+            # 补充日记预览
+            for item in data["items"]:
+                diary = await self.core.diary_store.read(user_id, item["date"])
+                item["diary_preview"] = (diary[:200] if diary else "") if diary else ""
+                item["has_diary"] = diary is not None
+            return self._ok(data)
+        except Exception as e:
+            return self._error(str(e))
+
+    async def get_day_detail(self):
+        """获取单天的完整记忆详情"""
+        try:
+            from quart import request
+            q = request.args
+            user_id = q.get("user_id", "Hana")
+            date = q.get("date", "")
+
+            # 日记 — 通过 DiaryStore
+            diary_content = await self.core.diary_store.read(user_id, date)
+
+            # 原子 — 通过 AtomStore
+            atoms = await self.core.atom_store.get_day_atoms(user_id, date)
+
+            # 图谱
+            graph = self.core.graph_store
+            gdata = await graph.query_graph(date, 30) if graph else {"nodes": [], "edges": []}
+
+            return self._ok({
+                "date": date,
+                "diary": {"content": diary_content or ""} if diary_content else None,
+                "atoms": atoms,
+                "graph": gdata,
+            })
         except Exception as e:
             return self._error(str(e))
 
@@ -194,18 +215,7 @@ class PageApi:
             user_id = body.get("user_id", "Hana")
             date = body.get("date", "")
             content = body.get("content", "")
-            import sqlite3, time as ttime
-            db = self.core.atom_store.db_path
-            conn = sqlite3.connect(db)
-            now = ttime.time()
-            row = conn.execute("SELECT id FROM diary_entries WHERE user_id=? AND date=?", (user_id, date)).fetchone()
-            if row:
-                conn.execute("UPDATE diary_entries SET content=?, updated_at=? WHERE id=?", (content, now, row[0]))
-            else:
-                conn.execute("INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
-                             (user_id, date, content, now, now))
-            conn.commit()
-            conn.close()
+            await self.core.diary_store.upsert(user_id, date, content)
             return self._ok({"saved": True})
         except Exception as e:
             return self._error(str(e))

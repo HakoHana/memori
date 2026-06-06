@@ -114,5 +114,20 @@
         "default": 0.99,
         "min": 0.9,
         "max": 1.0
+    },
+    "search_imp_weight": {
+        "description": "搜索排序：重要度权重（0~1，越高越看重事实重要性）",
+        "type": "float",
+        "default": 0.6,
+        "min": 0,
+        "max": 1,
+        "hint": "与匹配度权重之和不必等于1，系统会自动归一化"
+    },
+    "search_rank_weight": {
+        "description": "搜索排序：匹配度权重（0~1，越高越看重关键词匹配）",
+        "type": "float",
+        "default": 0.4,
+        "min": 0,
+        "max": 1
     }
 }

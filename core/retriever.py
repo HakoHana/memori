@@ -28,14 +28,23 @@ class Retriever:
         self.recall_count = self.config.get("recall_count", 5)
         self.recall_max_tokens = self.config.get("recall_max_tokens", 500)
 
+    def _search_weights(self) -> tuple[float, float]:
+        """从配置读取搜索权重"""
+        imp = float(self.config.get("search_imp_weight", 0.6))
+        rank = float(self.config.get("search_rank_weight", 0.4))
+        total = imp + rank
+        if total <= 0:
+            return 0.6, 0.4
+        return imp / total, rank / total  # 归一化，确保加起来=1
+
     async def recall(self, user_id: str, query: str, k: int | None = None) -> list[MemoryAtom]:
         """搜索相关记忆原子"""
         k = k or self.recall_count
         if not query or not query.strip():
             return []
 
-        # FTS5 搜索
-        atoms = await self.atom_store.search_fts(query, user_id, k)
+        imp_w, rank_w = self._search_weights()
+        atoms = await self.atom_store.search_fts(query, user_id, k, imp_w, rank_w)
         return atoms
 
     async def get_context_memories(

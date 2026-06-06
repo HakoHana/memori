@@ -158,8 +158,14 @@ class AtomStore(BaseDbStore):
     #  查询
     # ═══════════════════════════════════════════════════
 
-    async def search_fts(self, query: str, user_id: str, k: int = 5) -> list[MemoryAtom]:
-        """FTS5 全文搜索（按重要度 × BM25 排序）"""
+    async def search_fts(self, query: str, user_id: str, k: int = 5,
+                          imp_weight: float = 0.6, rank_weight: float = 0.4) -> list[MemoryAtom]:
+        """FTS5 全文搜索（按重要度 × BM25 排序）
+
+        Args:
+            imp_weight: 重要度权重（0~1）
+            rank_weight: 匹配度权重（0~1）
+        """
         safe_query = self._sanitize_fts_query(query)
         if not safe_query:
             return []
@@ -188,7 +194,7 @@ class AtomStore(BaseDbStore):
             atom = self._row_to_atom(r)
             rank_val = abs(r[-1])  # 最后一列是 rank
             rank_norm = 1.0 - min(1.0, rank_val / max_rank)  # 0~1，越高越匹配
-            score = atom.importance * 0.6 + rank_norm * 0.4
+            score = atom.importance * imp_weight + rank_norm * rank_weight
             scored.append((score, atom))
 
         scored.sort(key=lambda x: -x[0])

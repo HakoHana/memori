@@ -163,7 +163,11 @@
       var payload = await requestGraph("/graph/overview" + (qs ? "?" + qs : ""));
       state.hasLoadedOverview = true;
       renderPayload(payload, true);
-      if (window.lmFetchGraphStats) window.lmFetchGraphStats();
+      try {
+      var debugPayload = payload ? "snapshot.nodes=" + ((payload.snapshot && payload.snapshot.nodes && payload.snapshot.nodes.length) || 0) : "no payload";
+      setCanvasMessage(debugPayload, false);
+    } catch(_) {}
+    if (window.lmFetchGraphStats) window.lmFetchGraphStats();
     } catch (e) {
       setCanvasMessage(e.message || window.t("graph.errorFetch"), false);
     } finally {

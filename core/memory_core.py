@@ -61,6 +61,7 @@ class MemoryCore:
         self.graph_engine: GraphEngine | None = None
         self.conversation_store: ConversationStore | None = None
         self.write_op_log: WriteOpLog | None = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
         """初始化所有模块"""
@@ -117,7 +118,9 @@ class MemoryCore:
             logger.warning(f"[Memory] 写操作日志修复失败: {e}")
 
         # 索引一致性检查（异步，不阻塞初始化）
-        asyncio.ensure_future(self._async_index_check(db_path))
+        task = asyncio.ensure_future(self._async_index_check(db_path))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
         # 4. 图谱引擎
         self.graph_engine = GraphEngine(
@@ -198,6 +201,14 @@ class MemoryCore:
         if self.consolidation_manager:
             await self.consolidation_manager.destroy()
 
+        # 取消所有后台任务
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
         # 关闭数据库连接池
         try:
             await BaseDbStore.close_all()
@@ -256,9 +267,11 @@ class MemoryCore:
     async def trigger_capture(self, user_id: str, text: str):
         """后台触发记忆整理"""
         try:
-            asyncio.ensure_future(
+            task = asyncio.ensure_future(
                 self.consolidation_manager.on_message(user_id, text)
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except Exception:
             pass
 

@@ -101,11 +101,13 @@ class MemoryPlugin(Star):
             # 后台触发记忆整理
             user_id = self.memory_core.context_provider.get_user_id(event)
             text = self.memory_core.context_provider.get_conversation_text(event)
-            if user_id and text:
+            if user_id and text and self.memory_core:
                 logger.debug(f"[Memory] on_response 触发整理: {user_id}")
-                asyncio.ensure_future(
+                task = asyncio.ensure_future(
                     self.memory_core.consolidation_manager.on_message(user_id, text)
                 )
+                self.memory_core._background_tasks.add(task)
+                task.add_done_callback(self.memory_core._background_tasks.discard)
         except Exception as e:
             logger.error(f"[Memory] on_response 出错: {e}")
 

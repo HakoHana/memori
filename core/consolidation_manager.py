@@ -85,11 +85,16 @@ class ConsolidationManager:
     async def destroy(self):
         """销毁调度器"""
         self._destroyed = True
-        # 取消后台任务
+        # 取消后台任务并等待完成
+        pending_tasks = []
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
+            pending_tasks.append(self._flush_task)
         if self._idle_check_task and not self._idle_check_task.done():
             self._idle_check_task.cancel()
+            pending_tasks.append(self._idle_check_task)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
         # 强制刷写所有脏状态
         if self._dirty_users:

@@ -27,8 +27,8 @@ const COLORS = {
   topic: "#bc8cff", person: "#f0883e",
 };
 const TYPE_LABELS = {
-  episodic: "📌 事件", factual: "📖 知识", preference: "💕 偏好",
-  planned: "🎯 约定", relational: "👥 关系",
+  episodic: " 事件", factual: " 知识", preference: " 偏好",
+  planned: " 约定", relational: " 关系",
 };
 let currentPage = "graph";
 let memPage = 1, memKeyword = "", memType = "";
@@ -84,12 +84,12 @@ async function loadGraphOverview() {
     renderStats(data);
     renderLegend();
     renderGraph(data);
-  } catch(e) { console.error(e); }
+  } catch(e) { console.error(e); try { var ed = document.getElementById("err-display"); if (!ed) { ed = document.createElement("div"); ed.id = "err-display"; ed.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#f85149;color:#fff;padding:12px;font-size:14px;z-index:9999"; document.body.appendChild(ed); } ed.textContent = "loadMemories err: " + (e.message || e).slice(0,500); } catch(ex) {} }
 }
 
 function renderStats(data) {
   const el = document.getElementById("graph-stats");
-  el.innerHTML = `<span>🟣 节点 ${data.nodes.length}</span><span>🔗 边 ${data.edges.length}</span>`;
+  el.innerHTML = `<span> 节点 ${data.nodes.length}</span><span> 边 ${data.edges.length}</span>`;
 }
 
 function renderLegend() {
@@ -271,158 +271,227 @@ function showNodeDetail(d) {
 }
 
 /* ═══════════════════════════════════════
-/* ===== 记忆管理（日记表格 + 侧边详情窗） ===== */
+/* ===== 记忆管理（表格 + 侧边窗 + 批量操作） ===== */
 
-let currentDiaryDate = null;
+let currentDate = null;
+let selectedIds = new Set();
 
 async function loadMemories() {
   try {
     var kw = document.getElementById("mem-search").value;
+    var y = document.getElementById("mem-year").value;
+    var m = document.getElementById("mem-month").value;
     var url = "/memories?page=" + memPage + "&page_size=30";
     if (kw) url += "&keyword=" + encodeURIComponent(kw);
+    if (y) url += "&year=" + y;
+    if (m) url += "&month=" + m;
     var data = await apiGet(url);
-    renderDiaryTable(data);
+    renderTable(data);
   } catch(e) { console.error(e); }
 }
 
-function renderDiaryTable(data) {
+function renderTable(data) {
   document.getElementById("mem-count").textContent = data.total;
   var tb = document.getElementById("mem-tbody");
   if (!data.items || !data.items.length) {
-    tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--text2)">暂无记忆</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text2)">暂无记忆</td></tr>';
     document.getElementById("mem-pagination").innerHTML = "";
     return;
   }
   tb.innerHTML = data.items.map(function(item) {
-    var sel = item.date === currentDiaryDate ? ' selected' : '';
-    return '<tr class="mem-row' + sel + '" onclick="openDiaryDetail(\'' + item.date + '\')" data-date="' + item.date + '">'
-      + '<td class="col-date" style="font-size:0.85em;color:var(--accent);font-weight:600">' + item.date + '</td>'
-      + '<td><div class="mem-text">' + escapeHtml(item.content) + '</div></td>'
-      + '<td class="col-imp">' + item.atom_count + '</td>'
+    var sel = item.id === currentDate ? ' selected' : '';
+    var checked = selectedIds.has(item.id) ? ' checked' : '';
+    var typesHtml = '';
+    if (item.types && item.types.length) {
+      typesHtml = item.types.map(function(t) {
+        return '<span class="type-dot">' + (TYPE_LABELS[t.type] || t.type) + '</span>';
+      }).join('');
+    }
+    var statusMap = {active: '热', dormant: '温', archived: '冷'};
+    var statusClass = {active: 'status-hot', dormant: 'status-warm', archived: 'status-cold'};
+    var statusText = statusMap[item.status] || '热';
+    var sc = statusClass[item.status] || 'status-hot';
+    var ts = item.created_at ? new Date(item.created_at * 1000).toLocaleDateString() : '';
+    var updatedStr = '';
+    if (item.updated_at && item.updated_at !== item.created_at) {
+      var ud = new Date(item.updated_at * 1000);
+      updatedStr = ud.getFullYear() + '-' + String(ud.getMonth()+1).padStart(2,'0') + '-' + String(ud.getDate()).padStart(2,'0') + ' ' + String(ud.getHours()).padStart(2,'0') + ':' + String(ud.getMinutes()).padStart(2,'0');
+    }
+    return '<tr class="mem-row' + sel + '" onclick="openDetail(' + item.id + ')" data-id="' + item.id + '" data-date="' + item.date + '">'
+      + '<td style="width:30px" onclick="event.stopPropagation()"><input type="checkbox" class="mem-cb" value="' + item.id + '"' + checked + ' onchange="toggleSel(' + item.id + ')"></td>'
+      + '<td style="font-size:0.85em;color:var(--text2)">#' + item.id + '</td>'
+      + '<td><div class="mem-summary"><div class="preview">' + escapeHtml(item.content) + '</div>' + (updatedStr ? '<div class="updated">' + updatedStr + ' 更新</div>' : '') + '</div></td>'
+      + '<td><div class="type-dots">' + typesHtml + '</div></td>'
+      + '<td class="imp-cell">' + (item.avg_importance || '-') + '</td>'
+      + '<td class="imp-cell"><span class="' + sc + '">' + statusText + '</span></td>'
+      + '<td style="font-size:0.85em;color:var(--text2);white-space:nowrap">' + ts + '</td>'
       + '</tr>';
-  }).join("");
-
+  }).join('');
   var totalPages = Math.ceil(data.total / data.page_size);
   var pg = document.getElementById("mem-pagination");
-  var btns = "";
+  var btns = '';
   for (var p = 1; p <= Math.min(totalPages, 20); p++) {
-    btns += '<button class="' + (p === data.page ? "current" : "") + '" onclick="memPage=' + p + ';loadMemories()">' + p + '</button>';
+    btns += '<button class="' + (p === data.page ? 'current' : '') + '" onclick="memPage=' + p + ';loadMemories()">' + p + '</button>';
   }
   pg.innerHTML = btns;
 }
 
-async function searchMemories() {
-  memPage = 1;
-  loadMemories();
+async function searchMemories() { memPage = 1; loadMemories(); }
+
+function toggleSel(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  updateBatchBar();
+}
+function toggleSelectAll() {
+  var cbs = document.querySelectorAll('.mem-cb');
+  var allChecked = document.getElementById('sel-all').checked;
+  cbs.forEach(function(cb) { cb.checked = allChecked; var id = parseInt(cb.value); if (allChecked) selectedIds.add(id); else selectedIds.delete(id); });
+  updateBatchBar();
+}
+function updateBatchBar() {
+  var bar = document.getElementById('batch-bar');
+  if (selectedIds.size > 0) { bar.style.display = 'block'; document.getElementById('batch-count').textContent = '已选 ' + selectedIds.size + ' 篇'; }
+  else { bar.style.display = 'none'; }
+}
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.mem-cb').forEach(function(cb) { cb.checked = false; });
+  document.getElementById('sel-all').checked = false;
+  updateBatchBar();
+}
+async function batchDelete() {
+  var ids = Array.from(selectedIds);
+  if (!ids.length || !confirm('确定删除 ' + ids.length + ' 篇记忆？')) return;
+  try { await apiPost('/memories/batch-delete', {ids: ids}); selectedIds.clear(); updateBatchBar(); closeSidePanel(); loadMemories(); }
+  catch(e) { alert(e.message); }
 }
 
-async function openDiaryDetail(date) {
-  currentDiaryDate = date;
-  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
-  var row = document.querySelector('.mem-row[data-date="' + date + '"]');
-  if (row) row.classList.add("selected");
-
-  document.getElementById("mem-side").style.display = "flex";
-  document.getElementById("side-diary").textContent = "加载中...";
-  document.getElementById("side-atoms").innerHTML = "";
-
+async function openDetail(id) {
+  console.log('openDetail called, id=' + id);
+  // Toggle: if clicking the same row, close the side panel
+  if (currentDate === id && document.getElementById('mem-side').style.display === 'flex') {
+    closeSidePanel(); return;
+  }
+  currentDate = id;
+  document.querySelectorAll('.mem-row').forEach(function(r) { r.classList.remove('selected'); });
+  var row = document.querySelector('.mem-row[data-id="' + id + '"]');
+  if (row) row.classList.add('selected');
+  document.getElementById('mem-side').style.display = 'flex';
+  document.getElementById('side-diary').textContent = '加载中...';
+  document.getElementById('side-imp').innerHTML = '';
+  document.getElementById('side-atoms').innerHTML = '';
   try {
-    var data = await apiGet("/memories/day?date=" + date);
-    renderDiarySidePanel(data);
-  } catch(e) {
-    document.getElementById("side-diary").textContent = "加载失败: " + e.message;
-  }
+    console.log('Calling day API for did=' + id);
+    var p = apiGet('/memories/day?did=' + id);
+    var timeout = new Promise(function(_, reject) { setTimeout(function() { reject(new Error('超时')); }, 10000); });
+    var data = await Promise.race([p, timeout]);
+    renderSidePanel(data);
+  } catch(e) { document.getElementById('side-diary').textContent = '加载失败: ' + (e.message || e); console.error('Detail error:', e); }
 }
 
-function renderDiarySidePanel(data) {
-  var diaryEl = document.getElementById("side-diary");
-  if (data.diary && data.diary.content) {
-    diaryEl.textContent = data.diary.content;
-  } else {
-    diaryEl.innerHTML = '<div style="color:var(--text2)">无日记内容</div>';
+function renderSidePanel(data) {
+  var diaryEl = document.getElementById('side-diary');
+  if (data.diary && data.diary.content) { diaryEl.textContent = data.diary.content; }
+  else { diaryEl.innerHTML = '<div style="color:var(--text2)">无日记内容</div>'; }
+  var impEl = document.getElementById('side-imp');
+  if (data.imp_stats && data.imp_stats.count > 0) {
+    impEl.innerHTML = '<div class="side-imp-bar">'
+      + '<div class="side-imp-item"><div class="num">' + data.imp_stats.avg + '</div><div class="lbl">平均</div></div>'
+      + '<div class="side-imp-item"><div class="num">' + data.imp_stats.max + '</div><div class="lbl">最高</div></div>'
+      + '<div class="side-imp-item"><div class="num">' + data.imp_stats.count + '</div><div class="lbl">条数</div></div>'
+      + '</div>';
   }
-
-  var atomsEl = document.getElementById("side-atoms");
-  if (!data.atoms || !data.atoms.length) {
-    atomsEl.innerHTML = '<div style="color:var(--text2);font-size:0.9em">无关健事实</div>';
-    return;
-  }
-
+  var atomsEl = document.getElementById('side-atoms');
+  if (!data.atoms || !data.atoms.length) { atomsEl.innerHTML = '<div style="color:var(--text2);font-size:0.9em">无关键事实</div>'; return; }
   atomsEl.innerHTML = data.atoms.map(function(a, i) {
     var typeLabel = TYPE_LABELS[a.type] || a.type;
+    var content = escapeHtml(a.content);
+    if (content.length > 80) content = content.slice(0,80) + '...';
     return '<div class="atom-item">'
       + '<span class="atom-num">' + (i + 1) + '</span>'
       + '<div class="atom-body">'
-      + '<div class="atom-c">' + escapeHtml(a.content) + '</div>'
-      + '<div class="atom-m">'
-      + '<span class="atom-tag">' + typeLabel + '</span>'
-      + '<span>重要度 ' + a.importance + '</span>'
-      + '<span>ID #' + a.id + '</span>'
-      + '</div></div></div>';
-  }).join("");
-
+      + '<div class="atom-c">' + content + '</div>'
+      + '<div class="atom-m"><span class="atom-tag">' + typeLabel + '</span></div>'
+      + '</div></div>';
+  }).join('');
   window._detailData = data;
 }
 
 function editCurrentMemory() {
   var data = window._detailData;
-  if (!data || !data.atoms || !data.atoms.length) return;
-  var a = data.atoms[0];
-  var body = document.getElementById("modal-body");
-  var typeOpts = ["episodic","factual","preference","planned","relational"].map(function(t) {
-    return '<option value="' + t + '" ' + (t === a.type ? "selected" : "") + '>' + (TYPE_LABELS[t] || t) + '</option>';
-  }).join("");
-  body.innerHTML = [
-    '<div class="field"><label>内容</label><textarea id="edit-content" rows="3">' + escapeHtml(a.content) + '</textarea></div>',
-    '<div class="field"><label>类型</label><select id="edit-type">' + typeOpts + '</select></div>',
-    '<div class="field"><label>重要度 (0~1)</label><input type="number" id="edit-imp" step="0.05" min="0" max="1" value="' + a.importance + '"></div>',
-    '<div class="field"><label>状态</label><select id="edit-status">',
-    '  <option value="active">活跃</option>',
-    '  <option value="dormant">休眠</option>',
-    '  <option value="archived">归档</option>',
-    '</select></div>',
-  ].join("");
-  document.getElementById("modal-title").textContent = "编辑记忆 #" + a.id;
-  document.getElementById("modal").dataset.id = a.id;
-  document.getElementById("modal").style.display = "flex";
-  var mf = document.querySelector(".modal-footer");
-  if (mf) {
-    mf.innerHTML = '<button onclick="closeModal()">取消</button>'
-      + '<button onclick="saveMemoryEdit()" style="background:var(--accent);color:#fff;border:none">保存</button>';
+  if (!data) return;
+  var body = document.getElementById('modal-body');
+  body.innerHTML = '<div class="field"><label>状态(热/温/冷)</label><select id="edit-status">'
+    + '<option value="active"' + (data.status === 'active' ? ' selected' : '') + '>热</option>'
+    + '<option value="dormant"' + (data.status === 'dormant' ? ' selected' : '') + '>温</option>'
+    + '<option value="archived"' + (data.status === 'archived' ? ' selected' : '') + '>冷</option>'
+    + '</select></div>';
+  if (data.atoms) {
+    data.atoms.forEach(function(a, i) {
+      var typeOpts = ['episodic','factual','preference','planned','relational'].map(function(t) {
+        return '<option value="' + t + '" ' + (t === a.type ? 'selected' : '') + '>' + (TYPE_LABELS[t] || t) + '</option>';
+      }).join('');
+      body.innerHTML += '<div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px">'
+        + '<div style="font-size:0.85em;margin-bottom:4px">#' + (i+1) + ' ' + escapeHtml((a.content||'').slice(0,60)) + '</div>'
+        + '<select id="edit-type-' + i + '" style="margin-right:6px;padding:4px 6px;font-size:0.85em">' + typeOpts + '</select>'
+        + '<input type="number" id="edit-imp-' + i + '" value="' + a.importance + '" step="0.05" min="0" max="1" style="width:60px;padding:4px 6px;font-size:0.85em">'
+        + '</div>';
+    });
   }
+  document.getElementById('modal-title').textContent = '编辑记忆';
+  document.getElementById('modal').style.display = 'flex';
 }
 
 async function saveMemoryEdit() {
-  var id = parseInt(document.getElementById("modal").dataset.id);
+  var data = window._detailData;
+  if (!data) return;
   try {
-    await apiPost("/memories/update", {
-      id: id,
-      content: document.getElementById("edit-content").value,
-      atom_type: document.getElementById("edit-type").value,
-      importance: parseFloat(document.getElementById("edit-imp").value),
-    });
+    var status = document.getElementById('edit-status').value;
+    var rowEl = document.querySelector('.mem-row.selected');
+    var id = rowEl ? parseInt(rowEl.getAttribute('data-id')) : 0;
+    if (id) await apiPost('/memories/update-status', {id: id, status: status});
+    if (data.atoms) {
+      for (var i = 0; i < data.atoms.length; i++) {
+        var newType = document.getElementById('edit-type-' + i);
+        var newImp = document.getElementById('edit-imp-' + i);
+        if (newType && newImp) {
+          await apiPost('/memories/update', {id: data.atoms[i].id, atom_type: newType.value, importance: parseFloat(newImp.value)});
+        }
+      }
+    }
     closeModal();
     loadMemories();
+    if (id) openDetail(id);
   } catch(e) { alert(e.message); }
 }
 
 async function deleteCurrentMemory() {
-  if (!window._detailData || !window._detailData.atoms || !window._detailData.atoms.length) return;
-  var id = window._detailData.atoms[0].id;
-  if (!confirm("确定删除这条记忆？")) return;
-  try {
-    await apiPost("/memories/delete", {id: id});
-    closeSidePanel();
-    loadMemories();
-  } catch(e) { alert(e.message); }
+  var rowEl = document.querySelector('.mem-row.selected');
+  var id = rowEl ? parseInt(rowEl.getAttribute('data-id')) : 0;
+  if (!id || !confirm('确定删除此记忆？')) return;
+  try { await apiPost('/memories/delete', {id: id}); closeSidePanel(); loadMemories(); }
+  catch(e) { alert(e.message); }
 }
 
 function closeSidePanel() {
-  document.getElementById("mem-side").style.display = "none";
-  currentDiaryDate = null;
-  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
+  document.getElementById('mem-side').style.display = 'none';
+  currentDate = null;
+  document.querySelectorAll('.mem-row').forEach(function(r) { r.classList.remove('selected'); });
 }
 
+// Populate year filter
+try {
+  var yearSel = document.getElementById('mem-year');
+  if (yearSel) {
+    var y = new Date().getFullYear();
+    for (var i = y; i >= y-3; i--) {
+      var opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = i + '年';
+      yearSel.appendChild(opt);
+    }
+  }
+} catch(e) {}
 function escapeHtml(s) {
   if (!s) return "";
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -434,7 +503,7 @@ function waitForBridge(retries) {
     var modal = document.getElementById("modal");
     var footer = document.createElement("div");
     footer.className = "modal-footer";
-    footer.innerHTML = "<button onclick='closeModal()'>取消</button><button onclick='saveEdit()' style='background:var(--accent);color:#fff;border:none'>💾 保存</button>";
+    footer.innerHTML = "<button onclick='closeModal()'>取消</button><button onclick='saveEdit()' style='background:var(--accent);color:#fff;border:none'> 保存</button>";
     if (modal) modal.querySelector(".modal-body").after(footer);
     loadGraphOverview();
     return;

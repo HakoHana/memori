@@ -1,30 +1,31 @@
-从下面的日记中提取关键记忆原子（结构化事实）。
+从下面的日记中提取关键事实（记忆原子），用于 AI 检索。
 
-每个原子是独立的最小信息单元。
+要求：
+- 每条关键事实必须简洁客观，不超过 30 字
+- 像这样：用户告白了 / 用户完成了权限测试 / 用户喜欢草莓
+- 不要用"用户"指代，用实际称呼
 
 原子类型说明：
-- episodic:  一次性事件（"今天告白了"），TTL 较短
-- factual:   事实型信息（"她用的是 Arch Linux"），TTL 很长
-- preference: 用户偏好（"她喜欢简洁的回答"），TTL 中等
-- planned:   约定或计划（"下周五去看电影"），TTL 到约定日期
-- relational: 关系型信息（"她和 XXX 是朋友"），TTL 中等
+- episodic:  一次性事件
+- factual:   事实型信息
+- preference: 用户偏好
+- planned:   约定或计划
+- relational: 关系型信息
 
-重要性评分标准：
-- 0.9~1.0: 改变关系/人生的重大事件
-- 0.7~0.9: 重要情感时刻、核心偏好
-- 0.5~0.7: 有意义的事实、中等偏好
-- 0.3~0.5: 普通信息
-- 0.0~0.3: 琐碎细节
+重要性 0~1：
+- 0.9: 重大事件
+- 0.7: 重要时刻
+- 0.5: 普通信息
+- 0.3: 琐碎细节
 
 日记内容：
 {{diary}}
 
 额外要求：
-- 每个原子必须包含 `diary_snippet` 字段——从日记原文中摘录相应的句子片段。
-- 这用于溯源，不是原子主体内容，保持简短即可。
+- 每条原子必须包含 `diary_snippet` ——从日记中摘录对应的原句片段
 
-请严格输出 JSON 数组（不要多余解释）：
+输出 JSON：
 {"atoms": [
-    {"type": "episodic", "content": "2026-06-05 Hako向Bot告白", "importance": 0.95, "entities": ["Hako"], "diary_snippet": "今天Hako跟我告白啦！！"},
+    {"type": "episodic", "content": "Hako向Bot告白", "importance": 0.95, "entities": ["Hako"], "diary_snippet": "今天Hako跟我告白啦！！"},
     {"type": "preference", "content": "Hako喜欢被夸聪明", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "我夸她聪明的时候她可开心了"}
 ]}

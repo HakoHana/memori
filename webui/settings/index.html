@@ -29,10 +29,10 @@
     </style>
 </head>
 <body>
-    <h1>🧠 Memory 插件配置</h1>
+    <h1> Memory 插件配置</h1>
 
     <div class="card">
-        <h2>🤖 LLM 设置</h2>
+        <h2> LLM 设置</h2>
         <div class="field">
             <label for="llm_provider">记忆专用 LLM</label>
             <div class="hint">留空则使用 AstrBot 默认模型</div>
@@ -41,7 +41,7 @@
     </div>
 
     <div class="card">
-        <h2>⏱ 整理频率</h2>
+        <h2> 整理频率</h2>
         <div class="field">
             <label for="trigger_msg_count">按消息数触发</label>
             <div class="hint">每 N 轮消息触发一次记忆整理</div>
@@ -72,7 +72,7 @@
     </div>
 
     <div class="card">
-        <h2>📝 日记设置</h2>
+        <h2> 日记设置</h2>
         <div class="field">
             <label for="max_diary_tokens">单篇日记最大 Token</label>
             <input type="number" id="max_diary_tokens" min="100" max="2000">
@@ -85,7 +85,7 @@
     </div>
 
     <div class="card">
-        <h2>📖 记忆注入设置</h2>
+        <h2> 记忆注入设置</h2>
         <div class="field">
             <label>注入位置</label>
             <div class="radio-group" id="position_group">
@@ -109,7 +109,7 @@
         <div class="field">
             <label for="injection_template">自定义模板（可选）</label>
             <div class="hint">{{content}}=记忆内容，{{user}}=用户名，留空使用默认格式</div>
-            <textarea id="injection_template" placeholder="例如：📖 {{user}} 的事：\n{{content}}"></textarea>
+            <textarea id="injection_template" placeholder="例如： {{user}} 的事：\n{{content}}"></textarea>
         </div>
         <div class="field">
             <label>
@@ -128,7 +128,7 @@
         </div>
     </div>
 
-    <button class="save-btn" onclick="saveConfig()">💾 保存配置</button>
+    <button class="save-btn" onclick="saveConfig"> 保存配置</button>
     <div id="status" class="status" style="display:none"></div>
 
     <script src="app.js"></script>

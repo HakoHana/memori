@@ -136,3 +136,20 @@ button:hover { background: rgba(255,255,255,0.08); }
 .imp-col { width:80px; text-align:center; }
 .status-col { width:80px; }
 .ts-col { width:150px; white-space:nowrap; }
+
+/* ═══ 新表格样式 ═══ */
+.mem-table td { vertical-align:top; }
+.mem-table input[type="checkbox"] { cursor:pointer; }
+.mem-summary { line-height:1.35; }
+.mem-summary .preview { overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.mem-summary .updated { font-size:0.78em; color:var(--text2); margin-top:2px; }
+.type-dots { display:flex; gap:3px; flex-wrap:wrap; }
+.type-dot { font-size:0.72em; padding:1px 6px; border-radius:6px; background:rgba(88,166,255,0.12); color:var(--text2); white-space:nowrap; }
+.status-hot { color:#f85149; }
+.status-warm { color:#d29922; }
+.status-cold { color:#58a6ff; }
+.imp-cell { text-align:center; font-weight:600; }
+.side-imp-bar { display:flex; gap:12px; padding:6px 0; }
+.side-imp-item { text-align:center; }
+.side-imp-item .num { font-size:1.2em; font-weight:700; color:var(--accent); }
+.side-imp-item .lbl { font-size:0.78em; color:var(--text2); }

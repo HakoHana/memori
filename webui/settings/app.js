@@ -1,9 +1,9 @@
 // Memory 插件 WebUI 配置页面逻辑
 
-async function loadConfig() {
+async function loadConfig {
     try {
         const resp = await fetch('/api/plugin/config');
-        const data = await resp.json();
+        const data = await resp.json;
         const config = data.config || {};
 
         // 填入各字段
@@ -34,7 +34,7 @@ async function loadConfig() {
 }
 
             } catch(e) {
-async function saveConfig() {
+async function saveConfig {
     const config = {
         llm_provider: getValue('llm_provider'),
         trigger_msg_count: parseInt(getValue('trigger_msg_count')) || 10,
@@ -58,12 +58,12 @@ async function saveConfig() {
             body: JSON.stringify(config),
         });
         if (resp.ok) {
-            showStatus('✅ 配置已保存！', 'success');
+            showStatus(' 配置已保存！', 'success');
         } else {
-            showStatus('❌ 保存失败: ' + (await resp.text()), 'error');
+            showStatus(' 保存失败: ' + (await resp.text), 'error');
         }
     } catch (e) {
-        showStatus('❌ 保存失败: ' + e.message, 'error');
+        showStatus(' 保存失败: ' + e.message, 'error');
     }
 }
 
@@ -102,7 +102,7 @@ function showStatus(msg, type) {
     el.textContent = msg;
     el.className = 'status ' + type;
     el.style.display = 'block';
-    setTimeout(() => { el.style.display = 'none'; }, 3000);
+    setTimeout( => { el.style.display = 'none'; }, 3000);
 }
 
 // Radio 点击高亮

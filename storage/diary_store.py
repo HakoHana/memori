@@ -35,7 +35,7 @@ class DiaryStore(BaseDbStore):
                 ON diary_entries(user_id, date)
             """)
             # 兼容旧表：添加可能缺失的列
-            for col in ["topics", "sentiment", "importance", "atom_count"]:
+            for col in ["topics", "sentiment", "importance", "atom_count", "status"]:
                 try:
                     await db.execute(f"ALTER TABLE diary_entries ADD COLUMN {col}")
                 except Exception:

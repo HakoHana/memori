@@ -1327,33 +1327,51 @@
   /* ================================================================
      Init
      ================================================================ */
+  function initDebug(msg, err) {
+    var el = document.getElementById("graph-canvas-state");
+    if (!el) return;
+    el.textContent = (err ? "❌ " : "🔄 ") + msg;
+    if (err) el.style.color = "var(--danger)";
+  }
+
   async function init() {
-    applyTheme(readTheme());
-    listenBridgeTheme();
+    try {
+      initDebug("初始化...");
+      applyTheme(readTheme());
+      listenBridgeTheme();
 
-    var bridge = window.AstrBotPluginPage;
-    if (bridge && typeof bridge.ready === "function") {
-      try { await bridge.ready(); } catch (_) {}
-    }
+      var bridge = window.AstrBotPluginPage;
+      initDebug("桥接: " + (bridge ? "可用" : "不可用 — API无法工作"));
 
-    initSidebar();
-    initMemoryPage();
-    initRecallPage();
-
-    document.getElementById("peek-close").addEventListener("click", closePeek);
-    document.getElementById("peek-overlay").addEventListener("click", closePeek);
-    document.addEventListener("keydown", function(e) {
-      if (e.key === "Escape") {
-        closePeek();
-        state.memory.selected.clear();
-        renderMemoriesVirtual();
-        updateBatchBar();
+      if (bridge && typeof bridge.ready === "function") {
+        try { await bridge.ready(); initDebug("桥接就绪"); } catch (_) { initDebug("桥接等待跳过"); }
       }
-    });
 
-    /* Initial data */
-    fetchGraphStats();
-    switchPage("graph");
+      initSidebar();
+      initMemoryPage();
+      initRecallPage();
+
+      var peekClose = document.getElementById("peek-close");
+      if (peekClose) peekClose.addEventListener("click", closePeek);
+      var peekOverlay = document.getElementById("peek-overlay");
+      if (peekOverlay) peekOverlay.addEventListener("click", closePeek);
+      document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") {
+          closePeek();
+          state.memory.selected.clear();
+          renderMemoriesVirtual();
+          updateBatchBar();
+        }
+      });
+
+      initDebug("加载数据...");
+      fetchGraphStats();
+      switchPage("graph");
+      setTimeout(function() { initDebug("就绪 ✓"); }, 500);
+    } catch (e) {
+      initDebug("初始化失败: " + (e.message || e), true);
+      console.error("Init error:", e);
+    }
   }
 
   /* Expose to graph-ui */

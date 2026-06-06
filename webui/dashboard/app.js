@@ -1367,7 +1367,6 @@
       initDebug("加载数据...");
       fetchGraphStats();
       switchPage("graph");
-      setTimeout(function() { initDebug("就绪 ✓"); }, 500);
     } catch (e) {
       initDebug("初始化失败: " + (e.message || e), true);
       console.error("Init error:", e);

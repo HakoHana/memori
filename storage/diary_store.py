@@ -38,17 +38,19 @@ class DiaryStore(BaseDbStore):
             # 列补齐已在 db_migration.py 中集中管理
             await db.commit()
 
-    async def append(self, user_id: str, date_str: str, content: str):
-        """追加内容到当日日记（追加到已有条目末尾，或创建新条目）"""
+    async def append(self, user_id: str, date_str: str, content: str) -> int:
+        """追加内容到当日日记（追加到已有条目末尾，或创建新条目）
+
+        Returns:
+            日记条目的 ID
+        """
         now = time.time()
         async with self._connect() as db:
-            # 检查当天是否已有条目
             row = await db.execute_fetchall(
                 "SELECT id, content FROM diary_entries WHERE user_id = ? AND date = ?",
                 (user_id, date_str),
             )
             if row:
-                # 已有 → 追加
                 entry_id, old_content = row[0]
                 time_tag = datetime.now().strftime("%H:%M")
                 new_content = f"{old_content}\n\n## {time_tag}\n\n{content.strip()}"
@@ -57,13 +59,14 @@ class DiaryStore(BaseDbStore):
                     (new_content, now, entry_id),
                 )
             else:
-                # 没有 → 新建
-                await db.execute("""
+                cursor = await db.execute("""
                     INSERT INTO diary_entries
                     (user_id, date, content, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?)
                 """, (user_id, date_str, content.strip(), now, now))
+                entry_id = cursor.lastrowid
             await db.commit()
+            return entry_id
 
     async def read(self, user_id: str, date_str: str) -> str | None:
         """读取某天的日记"""

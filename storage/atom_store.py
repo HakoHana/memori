@@ -16,8 +16,8 @@ INSERT INTO memory_atoms
 (user_id, diary_date, atom_type, content, entities,
  importance, confidence, access_count, created_at,
  last_accessed_at, ttl_days, expires_at, decay_type, status,
- session_id, diary_ref, diary_snippet, metadata)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+ session_id, diary_ref, diary_snippet, metadata, diary_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
 """
 
 _INSERT_FTS_SQL = """\
@@ -58,13 +58,20 @@ class AtomStore(BaseDbStore):
                     diary_snippet TEXT DEFAULT '',
                     embedding BLOB,
                     embedding_model TEXT,
-                    metadata TEXT DEFAULT '{}'
+                    metadata TEXT DEFAULT '{}',
+                    diary_id INTEGER DEFAULT 0
                 )
             """)
             await db.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_atoms_fts
                 USING fts5(content, atom_id UNINDEXED, user_id UNINDEXED, tokenize='unicode61')
             """)
+
+            # 兼容旧数据库：补齐 diary_id 列
+            try:
+                await db.execute("ALTER TABLE memory_atoms ADD COLUMN diary_id INTEGER DEFAULT 0")
+            except Exception:
+                pass
 
             for idx in [
                 "CREATE INDEX IF NOT EXISTS idx_atoms_user_status_date ON memory_atoms(user_id, status, diary_date)",
@@ -279,7 +286,7 @@ class AtomStore(BaseDbStore):
         "id", "user_id", "diary_date", "atom_type", "content", "entities",
         "importance", "confidence", "access_count", "created_at", "last_accessed_at",
         "ttl_days", "expires_at", "decay_type", "status", "session_id", "diary_ref",
-        "diary_snippet", "embedding", "embedding_model", "metadata",
+        "diary_snippet", "embedding", "embedding_model", "metadata", "diary_id",
     )
 
     def _row_to_atom(self, row) -> MemoryAtom:
@@ -319,6 +326,7 @@ class AtomStore(BaseDbStore):
             atom.session_id, atom.diary_ref,
             atom.diary_snippet,
             json.dumps(atom.metadata, ensure_ascii=False),
+            atom.diary_id,
         )
 
     def _sanitize_fts_query(self, query: str) -> str:

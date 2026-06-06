@@ -174,8 +174,8 @@ class PageApi:
             where = " AND ".join(conditions)
             rows = await self._fetch(f"""
                 SELECT d.id, d.date, d.content, d.created_at, d.updated_at, COALESCE(d.status,'active'),
-                       (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_date=d.date AND a.user_id=d.user_id AND a.status='active'),
-                       (SELECT ROUND(AVG(a.importance),2) FROM memory_atoms a WHERE a.diary_date=d.date AND a.user_id=d.user_id AND a.status='active')
+                       (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_id=d.id AND a.status='active'),
+                       (SELECT ROUND(AVG(a.importance),2) FROM memory_atoms a WHERE a.diary_id=d.id AND a.status='active')
                 FROM diary_entries d WHERE {where}
                 ORDER BY d.id DESC LIMIT ? OFFSET ?
             """, params + [page_size, (page - 1) * page_size])
@@ -202,12 +202,18 @@ class PageApi:
             return self._error(str(e))
 
     async def _get_atom_types_for_date(self, date_str: str, diary_id: int = 0) -> list:
-        """获取某日期下原子的类型分布"""
+        """获取某日记下原子的类型分布"""
         try:
-            rows = await self._fetch(
-                "SELECT atom_type, COUNT(*) FROM memory_atoms WHERE diary_date=? AND status='active' GROUP BY atom_type ORDER BY COUNT(*) DESC",
-                (date_str,),
-            )
+            if diary_id:
+                rows = await self._fetch(
+                    "SELECT atom_type, COUNT(*) FROM memory_atoms WHERE diary_id=? AND status='active' GROUP BY atom_type ORDER BY COUNT(*) DESC",
+                    (diary_id,),
+                )
+            else:
+                rows = await self._fetch(
+                    "SELECT atom_type, COUNT(*) FROM memory_atoms WHERE diary_date=? AND status='active' GROUP BY atom_type ORDER BY COUNT(*) DESC",
+                    (date_str,),
+                )
             return [{"type": r[0], "count": r[1]} for r in rows]
         except Exception:
             return []
@@ -333,13 +339,13 @@ class PageApi:
             did_val, date_str, content, topics, sentiment, status = row
             status = status or "active"
 
-            # 读该日记关联的原子（按日期查，diary_id 列尚未填充）
+            # 读该日记关联的原子
             atoms = []
             atom_rows = await self._fetch("""
                 SELECT id, content, atom_type, importance, diary_snippet
-                FROM memory_atoms WHERE diary_date=? AND user_id=? AND status='active'
+                FROM memory_atoms WHERE diary_id=? AND status='active'
                 ORDER BY importance DESC
-            """, (date_str, "Hana"))
+            """, (did,))
             for r in atom_rows:
                 atoms.append({
                     "id": r[0], "content": r[1], "type": r[2],

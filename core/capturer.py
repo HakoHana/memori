@@ -88,16 +88,18 @@ class Capturer:
         if self.write_op_log:
             op_id = await self.write_op_log.begin("capture", {"user_id": user_id, "date": today})
 
-        # 1. 写日记
+        # 1. 写日记（获取日记 ID）
         diary_content = await self._write_diary(judge_result, conversation_summary)
+        diary_id = 0
         if diary_content:
-            await self.diary_store.append(user_id, today, diary_content)
+            diary_id = await self.diary_store.append(user_id, today, diary_content)
             if op_id:
                 await self.write_op_log.step(op_id, "diary_written")
 
         # 2. 提取原子
         atoms = await self._extract_atoms(diary_content, user_id, today)
         for atom in atoms:
+            atom.diary_id = diary_id
             atom.prepare_insert()
         if atoms:
             ids = await self.atom_store.insert_many(atoms)

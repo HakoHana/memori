@@ -189,13 +189,15 @@ class Capturer:
                     continue
                 jaccard = len(tokens & ex_tokens) / union
                 if jaccard >= 0.6:
-                    # 强化：重要度 +0.05（上限1.0）
+                    # 强化已有原子：重要度 +0.05
                     boosted = min(1.0, ex.importance + 0.05)
                     await self.atom_store.execute(
                         "UPDATE memory_atoms SET importance=?, confidence=?, access_count=access_count+1 WHERE id=?",
                         (boosted, max(atom.confidence, ex.confidence), ex.atom_id),
                     )
-                    return True
+                    # 同一篇日记的重复 → 跳过插入；不同日记的重复 → 两边都保留
+                    if ex.diary_id == atom.diary_id:
+                        return True
         except Exception:
             pass
         return False

@@ -360,7 +360,7 @@ function renderTable(data) {
   pg.innerHTML = btns;
 }
 
-async function searchMemories() { memPage = 1; loadMemories(); }
+async function searchMemories() { clearSelection(); memPage = 1; loadMemories(); }
 
 function toggleSel(id) {
   if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);

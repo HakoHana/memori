@@ -68,6 +68,11 @@
             </thead>
             <tbody id="mem-tbody"></tbody>
           </table>
+          <div id="batch-bar" style="display:none;padding:8px 12px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius);margin:8px 0;text-align:center">
+            <span id="batch-count" style="font-size:0.9em;margin-right:12px"></span>
+            <button onclick="clearSelection()" style="padding:4px 12px;font-size:0.85em">取消选择</button>
+            <button onclick="batchDelete()" style="padding:4px 12px;font-size:0.85em;background:var(--danger);color:#fff;border:none">🗑 删除选中</button>
+          </div>
           <div style="display:flex;align-items:center;gap:8px;justify-content:center;padding:12px 0">
             <div class="pagination" id="mem-pagination" style="padding:0"></div>
             <select id="mem-page-size" onchange="memPage=1;loadMemories()" style="padding:4px 8px;font-size:0.85em">

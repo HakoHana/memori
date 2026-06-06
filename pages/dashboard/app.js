@@ -336,15 +336,13 @@ function renderTable(data) {
     var statusText = statusMap[item.status] || '热';
     var sc = statusClass[item.status] || 'status-hot';
     var ts = item.created_at ? new Date(item.created_at * 1000).toLocaleDateString() : '';
-    var updatedStr = '';
-    if (item.updated_at && item.updated_at !== item.created_at) {
-      var ud = new Date(item.updated_at * 1000);
-      updatedStr = ud.getFullYear() + '-' + String(ud.getMonth()+1).padStart(2,'0') + '-' + String(ud.getDate()).padStart(2,'0') + ' ' + String(ud.getHours()).padStart(2,'0') + ':' + String(ud.getMinutes()).padStart(2,'0');
-    }
+    var tsVal = item.updated_at || item.created_at;
+    var ud = new Date(tsVal * 1000);
+    var updatedStr = ud.getFullYear() + '-' + String(ud.getMonth()+1).padStart(2,'0') + '-' + String(ud.getDate()).padStart(2,'0') + ' ' + String(ud.getHours()).padStart(2,'0') + ':' + String(ud.getMinutes()).padStart(2,'0');
     return '<tr class="mem-row' + sel + '" onclick="openDetail(' + item.id + ')" data-id="' + item.id + '" data-date="' + item.date + '">'
       + '<td style="width:30px" onclick="event.stopPropagation()"><input type="checkbox" class="mem-cb" value="' + item.id + '"' + checked + ' onchange="toggleSel(' + item.id + ')"></td>'
       + '<td style="font-size:0.85em;color:var(--text2)">#' + item.id + '</td>'
-      + '<td><div class="mem-summary"><div class="preview">' + escapeHtml(item.content) + '</div>' + (updatedStr ? '<div class="updated">' + updatedStr + ' 更新</div>' : '') + '</div></td>'
+      + '<td><div class="mem-summary"><div class="preview">' + escapeHtml(item.content) + '</div><div class="updated">' + updatedStr + '</div></div></td>'
       + '<td><div class="type-dots">' + typesHtml + '</div></td>'
       + '<td class="imp-cell">' + (item.avg_importance || '-') + '</td>'
       + '<td class="imp-cell"><span class="' + sc + '">' + statusText + '</span></td>'

@@ -32,7 +32,6 @@ class PageApi:
         register(f"{prefix}/memories/delete", self.delete_memory, ["POST"], "Delete memory")
         register(f"{prefix}/memories/timeline", self.get_timeline, ["GET"], "Memory timeline")
         register(f"{prefix}/memories/day", self.get_day_detail, ["GET"], "Memory day detail")
-        register(f"{prefix}/diaries", self.list_diaries, ["GET"], "List diary dates")
         register(f"{prefix}/diary", self.get_diary, ["GET"], "Get diary content")
         register(f"{prefix}/diary/update", self.update_diary, ["POST"], "Update diary")
         register(f"{prefix}/persona", self.get_persona, ["GET"], "Get persona")
@@ -105,35 +104,63 @@ class PageApi:
             return self._error(str(e))
 
     async def list_memories(self):
-        """列出记忆，按ID降序"""
+        """列出日记条目（非原子），按日期降序"""
         try:
             from quart import request
             q = request.args
             keyword = q.get("keyword", "").strip()
-            atom_type = q.get("type", "").strip()
             user_id = q.get("user_id", "Hana")
             page = max(1, int(q.get("page", 1)))
             page_size = min(200, max(1, int(q.get("page_size", 50))))
 
-            atoms = await self.core.atom_store.get_by_user(user_id)
+            import sqlite3
+            db = self.core.atom_store.db_path
+            conn = sqlite3.connect(db)
+
             if keyword:
-                result = await self.core.retriever.recall(user_id, keyword, 200)
-                atoms = result
-            if atom_type:
-                atoms = [a for a in atoms if a.atom_type.value == atom_type]
+                rows = conn.execute("""
+                    SELECT d.date, d.content, d.created_at,
+                           (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_date=d.date AND a.status='active') as atom_count
+                    FROM diary_entries d WHERE d.user_id=? AND d.content LIKE ?
+                    ORDER BY d.date DESC LIMIT ? OFFSET ?
+                """, (user_id, f"%{keyword}%", page_size, (page-1)*page_size)).fetchall()
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM diary_entries WHERE user_id=? AND content LIKE ?",
+                    (user_id, f"%{keyword}%")
+                ).fetchone()[0]
+            else:
+                rows = conn.execute("""
+                    SELECT d.date, d.content, d.created_at,
+                           (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_date=d.date AND a.status='active') as atom_count
+                    FROM diary_entries d WHERE d.user_id=?
+                    ORDER BY d.date DESC LIMIT ? OFFSET ?
+                """, (user_id, page_size, (page-1)*page_size)).fetchall()
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM diary_entries WHERE user_id=?", (user_id,)
+                ).fetchone()[0]
 
-            # 按ID降序
-            atoms.sort(key=lambda a: a.atom_id, reverse=True)
+            conn.close()
 
-            total = len(atoms)
-            offset = (page - 1) * page_size
-            page_atoms = atoms[offset:offset + page_size]
+            items = []
+            for r in rows:
+                date_str, content, created_ts, atom_cnt = r
+                preview = content.strip()
+                if "## " in preview:
+                    preview = preview.split("## ")[-1]
+                if len(preview) > 200:
+                    preview = preview[:200] + "..."
+                items.append({
+                    "date": date_str,
+                    "content": preview,
+                    "created_at": created_ts,
+                    "atom_count": atom_cnt,
+                })
 
             return self._ok({
                 "total": total,
                 "page": page,
                 "page_size": page_size,
-                "atoms": [self._atom_dict(a) for a in page_atoms],
+                "items": items,
             })
         except Exception as e:
             return self._error(str(e))

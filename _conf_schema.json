@@ -81,7 +81,7 @@
         "description": "自定义注入模板（{{content}}=记忆内容，{{user}}=用户名，留空使用默认格式）",
         "type": "string",
         "default": "",
-        "hint": "例如：📖 {{user}} 的事：\n{{content}}"
+        "hint": "例如： {{user}} 的事：\n{{content}}"
     },
     "injection_use_tag": {
         "description": "是否用 <memory> 标签包裹注入的记忆内容",

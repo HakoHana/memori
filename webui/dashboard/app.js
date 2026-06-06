@@ -271,48 +271,34 @@ function showNodeDetail(d) {
 }
 
 /* ═══════════════════════════════════════
-   记忆管理（表格）
-   ═══════════════════════════════════════ */
+/* ===== 记忆管理（日记表格 + 侧边详情窗） ===== */
 
-// memPage defined above
+let currentDiaryDate = null;
 
 async function loadMemories() {
-try { document.getElementById('mem-tbody').innerHTML='<tr><td style="color:var(--accent);padding:20px">加载中...</td></tr>'; } catch(e) {}
   try {
     var kw = document.getElementById("mem-search").value;
-    var t = document.getElementById("mem-type-filter").value;
-    var url = "/memories?page=" + memPage + "&page_size=50"; console.log('api url:', url);
+    var url = "/memories?page=" + memPage + "&page_size=30";
     if (kw) url += "&keyword=" + encodeURIComponent(kw);
-    if (t) url += "&type=" + t;
     var data = await apiGet(url);
-    renderMemTable(data);
+    renderDiaryTable(data);
   } catch(e) { console.error(e); }
 }
 
-function renderMemTable(data) {
+function renderDiaryTable(data) {
   document.getElementById("mem-count").textContent = data.total;
   var tb = document.getElementById("mem-tbody");
-  if (!data.atoms || !data.atoms.length) {
-    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text2)">暂无记忆</td></tr>';
+  if (!data.items || !data.items.length) {
+    tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--text2)">暂无记忆</td></tr>';
     document.getElementById("mem-pagination").innerHTML = "";
     return;
   }
-  tb.innerHTML = data.atoms.map(function(a) {
-    var ts = "";
-    if (a.created_at) {
-      var d = new Date(a.created_at * 1000);
-      var pad = function(n) { return n < 10 ? "0" + n : n; };
-      ts = d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-    }
-    var typeLabel = TYPE_LABELS[a.type] || a.type;
-    var snippet = a.diary_snippet ? '<div class="mem-snippet">' + escapeHtml(a.diary_snippet) + '</div>' : "";
-    return '<tr class="mem-row" onclick="editAtomById(' + a.id + ')">'
-      + '<td class="id-col">#' + a.id + '</td>'
-      + '<td><div class="mem-text">' + escapeHtml(a.content) + '</div>' + snippet + '</td>'
-      + '<td class="type-col"><span class="tag tag-' + a.type + '">' + typeLabel + '</span></td>'
-      + '<td class="imp-col">' + a.importance + '</td>'
-      + '<td class="status-col">' + (a.status || "active") + '</td>'
-      + '<td class="ts-col" style="color:var(--text2);font-size:0.85em">' + ts + '</td>'
+  tb.innerHTML = data.items.map(function(item) {
+    var sel = item.date === currentDiaryDate ? ' selected' : '';
+    return '<tr class="mem-row' + sel + '" onclick="openDiaryDetail(\'' + item.date + '\')" data-date="' + item.date + '">'
+      + '<td class="col-date" style="font-size:0.85em;color:var(--accent);font-weight:600">' + item.date + '</td>'
+      + '<td><div class="mem-text">' + escapeHtml(item.content) + '</div></td>'
+      + '<td class="col-imp">' + item.atom_count + '</td>'
       + '</tr>';
   }).join("");
 
@@ -330,38 +316,84 @@ async function searchMemories() {
   loadMemories();
 }
 
+async function openDiaryDetail(date) {
+  currentDiaryDate = date;
+  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
+  var row = document.querySelector('.mem-row[data-date="' + date + '"]');
+  if (row) row.classList.add("selected");
 
-async function editAtomById(id) {
+  document.getElementById("mem-side").style.display = "flex";
+  document.getElementById("side-diary").textContent = "加载中...";
+  document.getElementById("side-atoms").innerHTML = "";
+
   try {
-    var data = await apiGet("/memories/detail?id=" + id);
-    editAtom(data.id, data.content, data.type, data.importance);
-  } catch(e) { alert("加载失败: " + e.message); }
+    var data = await apiGet("/memories/day?date=" + date);
+    renderDiarySidePanel(data);
+  } catch(e) {
+    document.getElementById("side-diary").textContent = "加载失败: " + e.message;
+  }
 }
 
-function editAtom(id, content, type, importance) {
-  const body = document.getElementById("modal-body");
-  const typeOpts = ["episodic","factual","preference","planned","relational"].map(t =>
-    "<option value='" + t + "' " + (t===type?"selected":"") + ">" + t + "</option>"
-  ).join("");
+function renderDiarySidePanel(data) {
+  var diaryEl = document.getElementById("side-diary");
+  if (data.diary && data.diary.content) {
+    diaryEl.textContent = data.diary.content;
+  } else {
+    diaryEl.innerHTML = '<div style="color:var(--text2)">无日记内容</div>';
+  }
+
+  var atomsEl = document.getElementById("side-atoms");
+  if (!data.atoms || !data.atoms.length) {
+    atomsEl.innerHTML = '<div style="color:var(--text2);font-size:0.9em">无关健事实</div>';
+    return;
+  }
+
+  atomsEl.innerHTML = data.atoms.map(function(a, i) {
+    var typeLabel = TYPE_LABELS[a.type] || a.type;
+    return '<div class="atom-item">'
+      + '<span class="atom-num">' + (i + 1) + '</span>'
+      + '<div class="atom-body">'
+      + '<div class="atom-c">' + escapeHtml(a.content) + '</div>'
+      + '<div class="atom-m">'
+      + '<span class="atom-tag">' + typeLabel + '</span>'
+      + '<span>重要度 ' + a.importance + '</span>'
+      + '<span>ID #' + a.id + '</span>'
+      + '</div></div></div>';
+  }).join("");
+
+  window._detailData = data;
+}
+
+function editCurrentMemory() {
+  var data = window._detailData;
+  if (!data || !data.atoms || !data.atoms.length) return;
+  var a = data.atoms[0];
+  var body = document.getElementById("modal-body");
+  var typeOpts = ["episodic","factual","preference","planned","relational"].map(function(t) {
+    return '<option value="' + t + '" ' + (t === a.type ? "selected" : "") + '>' + (TYPE_LABELS[t] || t) + '</option>';
+  }).join("");
   body.innerHTML = [
-    "<div class='field'><label>内容</label><textarea id='edit-content'>" + content + "</textarea></div>",
-    "<div class='field'><label>类型</label><select id='edit-type'>" + typeOpts + "</select></div>",
-    "<div class='field'><label>重要度 (0~1)</label><input type='number' id='edit-imp' step='0.05' min='0' max='1' value='" + importance + "'></div>",
-    "<div class='field'><label>状态</label><select id='edit-status'>",
-    "  <option value='active'>活跃 🔥</option>",
-    "  <option value='dormant'>休眠 🫧</option>",
-    "  <option value='archived'>归档 ❄️</option>",
-    "</select></div>",
-  ].join("\n");
-  document.getElementById("modal-title").textContent = "编辑记忆 #" + id;
-  document.getElementById("modal").dataset.id = id;
+    '<div class="field"><label>内容</label><textarea id="edit-content" rows="3">' + escapeHtml(a.content) + '</textarea></div>',
+    '<div class="field"><label>类型</label><select id="edit-type">' + typeOpts + '</select></div>',
+    '<div class="field"><label>重要度 (0~1)</label><input type="number" id="edit-imp" step="0.05" min="0" max="1" value="' + a.importance + '"></div>',
+    '<div class="field"><label>状态</label><select id="edit-status">',
+    '  <option value="active">活跃</option>',
+    '  <option value="dormant">休眠</option>',
+    '  <option value="archived">归档</option>',
+    '</select></div>',
+  ].join("");
+  document.getElementById("modal-title").textContent = "编辑记忆 #" + a.id;
+  document.getElementById("modal").dataset.id = a.id;
   document.getElementById("modal").style.display = "flex";
-  const mf = document.querySelector(".modal-footer") || body.parentElement.querySelector(".modal-footer");
-  if (mf) mf.innerHTML = "<button onclick='closeModal()'>取消</button><button onclick='saveEdit()' style='background:var(--accent);color:#fff;border:none'>💾 保存</button>";
+  var mf = document.querySelector(".modal-footer");
+  if (mf) {
+    mf.innerHTML = '<button onclick="closeModal()">取消</button>'
+      + '<button onclick="saveMemoryEdit()" style="background:var(--accent);color:#fff;border:none">保存</button>';
+  }
 }
 
-async function saveEdit() {
-  const id = parseInt(document.getElementById("modal").dataset.id);
+async function saveMemoryEdit() {
+  var id = parseInt(document.getElementById("modal").dataset.id);
   try {
     await apiPost("/memories/update", {
       id: id,
@@ -370,61 +402,26 @@ async function saveEdit() {
       importance: parseFloat(document.getElementById("edit-imp").value),
     });
     closeModal();
-    const dateEl = document.querySelector(".detail-date");
-    if (dateEl) loadDayDetail(dateEl.textContent.replace("📅 ", ""));
+    loadMemories();
   } catch(e) { alert(e.message); }
 }
 
-async function deleteMemory(id) {
+async function deleteCurrentMemory() {
+  if (!window._detailData || !window._detailData.atoms || !window._detailData.atoms.length) return;
+  var id = window._detailData.atoms[0].id;
   if (!confirm("确定删除这条记忆？")) return;
   try {
     await apiPost("/memories/delete", {id: id});
+    closeSidePanel();
     loadMemories();
-    document.getElementById("detail-content").style.display = "none";
-    document.getElementById("detail-placeholder").style.display = "block";
   } catch(e) { alert(e.message); }
 }
 
-function closeModal(e) {
-  if (e && e.target !== e.currentTarget) return;
-  document.getElementById("modal").style.display = "none";
+function closeSidePanel() {
+  document.getElementById("mem-side").style.display = "none";
+  currentDiaryDate = null;
+  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
 }
-
-function escapeJs(s) {
-  if (!s) return "";
-  return s.replace(/"/g, " ").replace(/\\/g, " ").replace(/\n/g, " ").replace(/\r/g, " ").trim();
-}
-
-
-// DOMContentLoaded 后开始等待桥接
-
-async function loadPersona() {
-  try {
-    const data = await apiGet("/persona");
-    document.getElementById("persona-editor").value = data.persona || "（暂无画像）";
-  } catch(e) { console.error(e); }
-}
-
-async function savePersona() {
-  try {
-    await apiPost("/persona/update", {content: document.getElementById("persona-editor").value});
-  } catch(e) { alert(e.message); }
-}
-
-/* ===== 系统 ===== */
-
-async function loadSystemStats() {
-  try {
-    const data = await apiGet("/stats");
-    document.getElementById("sys-stats").innerHTML = [
-      '<div class="sys-card"><div class="num">' + (data.atoms?.total || 0) + '</div><div class="label">🧬 记忆原子</div></div>',
-      '<div class="sys-card"><div class="num">' + (data.diary_months || 0) + '</div><div class="label">📔 日记月份</div></div>',
-      '<div class="sys-card"><div class="num">' + (data.graph_nodes || 0) + '</div><div class="label">🕸 图谱节点</div></div>',
-      '<div class="sys-card"><div class="num">' + (data.graph_edges || 0) + '</div><div class="label">🔗 图谱连接</div></div>',
-    ].join("");
-  } catch(e) { console.error(e); }
-}
-
 
 function escapeHtml(s) {
   if (!s) return "";

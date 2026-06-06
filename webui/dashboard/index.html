@@ -35,36 +35,47 @@
     </section>
 
     <section class="page" id="page-memories">
-      <header><h2>📖 记忆管理</h2>
+      <header><h2>记忆管理</h2>
         <div class="toolbar">
-          <input id="mem-search" placeholder="搜索ID或关键词..." onkeyup="searchMemories()">
-          <select id="mem-type-filter" onchange="searchMemories()">
-            <option value="">全部类型</option>
-            <option value="episodic">📌 事件</option>
-            <option value="factual">📖 知识</option>
-            <option value="preference">💕 偏好</option>
-            <option value="planned">🎯 约定</option>
-            <option value="relational">👥 关系</option>
-          </select>
+          <input id="mem-search" placeholder="搜索关键词..." oninput="searchMemories()">
           <span id="mem-count" class="count-badge"></span>
         </div>
       </header>
-      <div class="table-container">
-        <table class="mem-table">
-          <thead>
-            <tr>
-              <th class="id-col">ID</th>
-              <th>内容</th>
-              <th class="type-col">类型</th>
-              <th class="imp-col">重要度</th>
-              <th class="status-col">状态</th>
-              <th class="ts-col">时间</th>
-            </tr>
-          </thead>
-          <tbody id="mem-tbody"></tbody>
-        </table>
+      <div class="mem-body">
+        <div class="mem-table-wrap">
+          <table class="mem-table">
+            <thead>
+              <tr>
+                <th class="col-date" style="width:100px">日期</th>
+                <th>内容</th>
+                <th class="col-imp" style="width:70px">事实</th>
+              </tr>
+            </thead>
+            <tbody id="mem-tbody"></tbody>
+          </table>
+          <div class="pagination" id="mem-pagination"></div>
+        </div>
+        <div class="mem-side" id="mem-side" style="display:none">
+          <div class="side-header">
+            <h3>记忆详情</h3>
+            <div class="side-actions">
+              <button onclick="editCurrentMemory()">编辑</button>
+              <button onclick="deleteCurrentMemory()" style="color:var(--danger)">删除</button>
+              <button onclick="closeSidePanel()" style="font-size:1.2em;background:none;border:none">X</button>
+            </div>
+          </div>
+          <div class="side-scroll" id="side-scroll">
+            <div>
+              <h4>日记</h4>
+              <div id="side-diary" class="side-diary">选择一条记忆查看详情</div>
+            </div>
+            <div>
+              <h4>关键事实</h4>
+              <div id="side-atoms"></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="pagination" id="mem-pagination"></div>
     </section>
 
     <section class="page" id="page-persona">

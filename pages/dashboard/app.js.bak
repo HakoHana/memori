@@ -1,23 +1,10 @@
-window.addEventListener("error", function(e) {
-  console.error("JS ErrorEvent:", e.message, e.filename, e.lineno, e.error);
-  if (e.message === "Script error." || !e.error) return;
-  showErr("ERR: " + (e.error.stack || e.message).slice(0,500));
-  e.preventDefault();
-});
-window.addEventListener("unhandledrejection", function(e) {
-  console.error("Unhandled promise rejection:", e.reason);
-  showErr("PROMISE: " + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason));
-});
-function showErr(msg) {
-  var el = document.getElementById("err-display");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "err-display";
-    el.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#f85149;color:#fff;padding:12px;font-size:14px;z-index:9999;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto";
-    document.body.appendChild(el);
-  }
-  el.textContent = msg.slice(0,1000);
-}
+window.onerror = function(msg, url, line, col, err) {
+  var el = document.createElement("div");
+  el.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#f85149;color:#fff;padding:12px;font-size:13px;z-index:9999;white-space:pre-wrap;word-break:break-all";
+  el.textContent = "JS错误: " + (err && err.stack ? err.stack.slice(0,500) : msg);
+  document.body.appendChild(el);
+  return true;
+};
 
 /* Memory Dashboard — 主逻辑 */
 
@@ -45,7 +32,7 @@ document.querySelectorAll(".nav-item").forEach(el => {
     currentPage = el.dataset.page;
     if (currentPage === "graph") loadGraphOverview();
     if (currentPage === "memories") loadMemories();
-    if (currentPage === "memories") loadMemories();
+    if (currentPage === "diaries") loadDiaryMonths();
     if (currentPage === "persona") loadPersona();
     if (currentPage === "system") loadSystemStats();
   });
@@ -271,181 +258,208 @@ function showNodeDetail(d) {
 }
 
 /* ═══════════════════════════════════════
-/* ===== 记忆管理（日记表格 + 侧边详情窗） ===== */
-
-let currentDiaryDate = null;
+   记忆管理
+   ═══════════════════════════════════════ */
 
 async function loadMemories() {
+  memKeyword = document.getElementById("mem-search").value;
+  memType = document.getElementById("mem-type-filter").value;
   try {
-    var kw = document.getElementById("mem-search").value;
-    var url = "/memories?page=" + memPage + "&page_size=30";
-    if (kw) url += "&keyword=" + encodeURIComponent(kw);
-    var data = await apiGet(url);
-    renderDiaryTable(data);
+    let url = `/memories?page=${memPage}&page_size=50`;
+    if (memKeyword) url += `&keyword=${encodeURIComponent(memKeyword)}`;
+    if (memType) url += `&type=${memType}`;
+    const data = await apiGet(url);
+    renderMemories(data);
   } catch(e) { console.error(e); }
 }
 
-function renderDiaryTable(data) {
+function renderMemories(data) {
   document.getElementById("mem-count").textContent = data.total;
-  var tb = document.getElementById("mem-tbody");
-  if (!data.items || !data.items.length) {
-    tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:40px;color:var(--text2)">暂无记忆</td></tr>';
-    document.getElementById("mem-pagination").innerHTML = "";
-    return;
-  }
-  tb.innerHTML = data.items.map(function(item) {
-    var sel = item.date === currentDiaryDate ? ' selected' : '';
-    return '<tr class="mem-row' + sel + '" onclick="openDiaryDetail(\'' + item.date + '\')" data-date="' + item.date + '">'
-      + '<td class="col-date" style="font-size:0.85em;color:var(--accent);font-weight:600">' + item.date + '</td>'
-      + '<td><div class="mem-text">' + escapeHtml(item.content) + '</div></td>'
-      + '<td class="col-imp">' + item.atom_count + '</td>'
-      + '</tr>';
-  }).join("");
+  const list = document.getElementById("mem-list");
+  list.innerHTML = data.atoms.map(a => `
+    <div class="mem-card" onclick="editMemory(${a.id})">
+      <span class="mem-type">${TYPE_LABELS[a.type] || a.type}</span>
+      <div class="mem-content">
+        <div class="c">${escapeHtml(a.content)}</div>
+        <div class="m">${a.date || ""} · 重要度 ${a.importance} · 访问 ${a.access_count} 次 · ID ${a.id}</div>
+        ${a.diary_snippet ? `<div class="m" style="color:#666">📝 ${escapeHtml(a.diary_snippet)}</div>` : ""}
+      </div>
+      <div class="mem-actions">
+        <button onclick="event.stopPropagation();editMemory(${a.id})">✏️</button>
+        <button onclick="event.stopPropagation();deleteMemory(${a.id})" style="color:var(--danger)">🗑</button>
+      </div>
+    </div>
+  `).join("");
 
-  var totalPages = Math.ceil(data.total / data.page_size);
-  var pg = document.getElementById("mem-pagination");
-  var btns = "";
-  for (var p = 1; p <= Math.min(totalPages, 20); p++) {
-    btns += '<button class="' + (p === data.page ? "current" : "") + '" onclick="memPage=' + p + ';loadMemories()">' + p + '</button>';
-  }
-  pg.innerHTML = btns;
+  // Pagination
+  const totalPages = Math.ceil(data.total / data.page_size);
+  const pg = document.getElementById("mem-pagination");
+  pg.innerHTML = Array.from({length: Math.min(totalPages, 20)}, (_, i) => i+1).map(p =>
+    `<button class="${p === data.page ? 'current' : ''}" onclick="memPage=${p};loadMemories()">${p}</button>`
+  ).join("");
 }
 
-async function searchMemories() {
-  memPage = 1;
-  loadMemories();
+function editMemory(id) {
+  apiGet(`/memories/detail?id=${id}`).then(atom => {
+    const body = document.getElementById("modal-body");
+    body.innerHTML = `
+      <div class="field"><label>内容</label><textarea id="mem-edit-content">${escapeHtml(atom.content)}</textarea></div>
+      <div class="field"><label>类型</label><select id="mem-edit-type">
+        ${Object.entries(TYPE_LABELS).map(([k,v]) => `<option value="${k}" ${k===atom.type?"selected":""}>${v}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>重要度 (0~1)</label><input type="number" id="mem-edit-imp" step="0.05" min="0" max="1" value="${atom.importance}"></div>
+      <div class="field"><label>原文片段</label><div style="color:var(--text2);font-size:0.85em">${escapeHtml(atom.diary_snippet || "无")}</div></div>
+    `;
+    document.getElementById("modal-title").textContent = `编辑记忆 #${id}`;
+    document.getElementById("modal").style.display = "flex";
+    document.getElementById("modal").dataset.id = id;
+  }).catch(e => alert(e.message));
 }
 
-async function openDiaryDetail(date) {
-  currentDiaryDate = date;
-  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
-  var row = document.querySelector('.mem-row[data-date="' + date + '"]');
-  if (row) row.classList.add("selected");
-
-  document.getElementById("mem-side").style.display = "flex";
-  document.getElementById("side-diary").textContent = "加载中...";
-  document.getElementById("side-atoms").innerHTML = "";
-
+async function saveEdit() {
+  const id = parseInt(document.getElementById("modal").dataset.id);
+  const content = document.getElementById("mem-edit-content").value;
+  const type = document.getElementById("mem-edit-type").value;
+  const imp = parseFloat(document.getElementById("mem-edit-imp").value);
   try {
-    var data = await apiGet("/memories/day?date=" + date);
-    renderDiarySidePanel(data);
-  } catch(e) {
-    document.getElementById("side-diary").textContent = "加载失败: " + e.message;
-  }
-}
-
-function renderDiarySidePanel(data) {
-  var diaryEl = document.getElementById("side-diary");
-  if (data.diary && data.diary.content) {
-    diaryEl.textContent = data.diary.content;
-  } else {
-    diaryEl.innerHTML = '<div style="color:var(--text2)">无日记内容</div>';
-  }
-
-  var atomsEl = document.getElementById("side-atoms");
-  if (!data.atoms || !data.atoms.length) {
-    atomsEl.innerHTML = '<div style="color:var(--text2);font-size:0.9em">无关健事实</div>';
-    return;
-  }
-
-  atomsEl.innerHTML = data.atoms.map(function(a, i) {
-    var typeLabel = TYPE_LABELS[a.type] || a.type;
-    return '<div class="atom-item">'
-      + '<span class="atom-num">' + (i + 1) + '</span>'
-      + '<div class="atom-body">'
-      + '<div class="atom-c">' + escapeHtml(a.content) + '</div>'
-      + '<div class="atom-m">'
-      + '<span class="atom-tag">' + typeLabel + '</span>'
-      + '<span>重要度 ' + a.importance + '</span>'
-      + '<span>ID #' + a.id + '</span>'
-      + '</div></div></div>';
-  }).join("");
-
-  window._detailData = data;
-}
-
-function editCurrentMemory() {
-  var data = window._detailData;
-  if (!data || !data.atoms || !data.atoms.length) return;
-  var a = data.atoms[0];
-  var body = document.getElementById("modal-body");
-  var typeOpts = ["episodic","factual","preference","planned","relational"].map(function(t) {
-    return '<option value="' + t + '" ' + (t === a.type ? "selected" : "") + '>' + (TYPE_LABELS[t] || t) + '</option>';
-  }).join("");
-  body.innerHTML = [
-    '<div class="field"><label>内容</label><textarea id="edit-content" rows="3">' + escapeHtml(a.content) + '</textarea></div>',
-    '<div class="field"><label>类型</label><select id="edit-type">' + typeOpts + '</select></div>',
-    '<div class="field"><label>重要度 (0~1)</label><input type="number" id="edit-imp" step="0.05" min="0" max="1" value="' + a.importance + '"></div>',
-    '<div class="field"><label>状态</label><select id="edit-status">',
-    '  <option value="active">活跃</option>',
-    '  <option value="dormant">休眠</option>',
-    '  <option value="archived">归档</option>',
-    '</select></div>',
-  ].join("");
-  document.getElementById("modal-title").textContent = "编辑记忆 #" + a.id;
-  document.getElementById("modal").dataset.id = a.id;
-  document.getElementById("modal").style.display = "flex";
-  var mf = document.querySelector(".modal-footer");
-  if (mf) {
-    mf.innerHTML = '<button onclick="closeModal()">取消</button>'
-      + '<button onclick="saveMemoryEdit()" style="background:var(--accent);color:#fff;border:none">保存</button>';
-  }
-}
-
-async function saveMemoryEdit() {
-  var id = parseInt(document.getElementById("modal").dataset.id);
-  try {
-    await apiPost("/memories/update", {
-      id: id,
-      content: document.getElementById("edit-content").value,
-      atom_type: document.getElementById("edit-type").value,
-      importance: parseFloat(document.getElementById("edit-imp").value),
-    });
+    await apiPost("/memories/update", {id, content, atom_type: type, importance: imp});
     closeModal();
     loadMemories();
   } catch(e) { alert(e.message); }
 }
 
-async function deleteCurrentMemory() {
-  if (!window._detailData || !window._detailData.atoms || !window._detailData.atoms.length) return;
-  var id = window._detailData.atoms[0].id;
+async function deleteMemory(id) {
   if (!confirm("确定删除这条记忆？")) return;
   try {
-    await apiPost("/memories/delete", {id: id});
-    closeSidePanel();
+    await apiPost("/memories/delete", {id});
     loadMemories();
   } catch(e) { alert(e.message); }
 }
 
-function closeSidePanel() {
-  document.getElementById("mem-side").style.display = "none";
-  currentDiaryDate = null;
-  document.querySelectorAll(".mem-row").forEach(function(r) { r.classList.remove("selected"); });
+function closeModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById("modal").style.display = "none";
 }
 
+/* ═══════════════════════════════════════
+   日记
+   ═══════════════════════════════════════ */
+
+async function loadDiaryMonths() {
+  try {
+    const data = await apiGet("/diaries");
+    const sel = document.getElementById("diary-month");
+    sel.innerHTML = (data.months || []).map(m =>
+      `<option value="${m.year}-${m.month}">${m.year}年${m.month}月</option>`
+    ).join("");
+    if (sel.options.length) loadDiaryDates();
+  } catch(e) { console.error(e); }
+}
+
+async function loadDiaryDates() {
+  const val = document.getElementById("diary-month").value;
+  if (!val) return;
+  const [y, m] = val.split("-");
+  try {
+    const data = await apiGet(`/diaries?year=${y}&month=${m}`);
+    const list = document.getElementById("diary-list");
+    list.innerHTML = (data.dates || []).map(d =>
+      `<button onclick="loadDiaryContent('${d.date}')" data-date="${d.date}">${d.date}</button>`
+    ).join("");
+    if (data.dates?.length) loadDiaryContent(data.dates[0].date);
+  } catch(e) { console.error(e); }
+}
+
+async function loadDiaryContent(date) {
+  document.querySelectorAll("#diary-list button").forEach(b => b.classList.remove("active"));
+  const btn = document.querySelector(`#diary-list button[data-date="${date}"]`);
+  if (btn) btn.classList.add("active");
+  document.getElementById("diary-date-hidden").value = date;
+  try {
+    const data = await apiGet(`/diary?date=${date}`);
+    document.getElementById("diary-editor").value = data.content || "";
+  } catch(e) { console.error(e); }
+}
+
+async function saveDiary() {
+  const date = document.getElementById("diary-date-hidden").value;
+  const content = document.getElementById("diary-editor").value;
+  if (!date) return;
+  try {
+    await apiPost("/diary/update", {date, content});
+    alert("✅ 已保存");
+  } catch(e) { alert(e.message); }
+}
+
+/* ═══════════════════════════════════════
+   画像
+   ═══════════════════════════════════════ */
+
+async function loadPersona() {
+  try {
+    const data = await apiGet("/persona");
+    document.getElementById("persona-editor").value = data.persona || "（暂无画像）";
+  } catch(e) { console.error(e); }
+}
+
+async function savePersona() {
+  try {
+    await apiPost("/persona/update", {content: document.getElementById("persona-editor").value});
+    alert("✅ 已保存");
+  } catch(e) { alert(e.message); }
+}
+
+/* ═══════════════════════════════════════
+   系统
+   ═══════════════════════════════════════ */
+
+async function loadSystemStats() {
+  try {
+    const data = await apiGet("/stats");
+    document.getElementById("sys-stats").innerHTML = `
+      <div class="sys-card"><div class="num">${data.atoms?.total || 0}</div><div class="label">🧬 记忆原子</div></div>
+      <div class="sys-card"><div class="num">${data.diary_months || 0}</div><div class="label">📔 日记月份</div></div>
+      <div class="sys-card"><div class="num">${data.graph_nodes || 0}</div><div class="label">🕸 图谱节点</div></div>
+      <div class="sys-card"><div class="num">${data.graph_edges || 0}</div><div class="label">🔗 图谱连接</div></div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function runImport() {
+  const path = document.getElementById("import-path").value;
+  const out = document.getElementById("import-output");
+  out.textContent = "导入中...";
+  try {
+    const data = await apiPost("/import/livingmemory", {source: path});
+    out.textContent = data.stdout + "\n" + (data.stderr || "") + `\n退出码: ${data.returncode}`;
+  } catch(e) { out.textContent = "错误: " + e.message; }
+}
+
+/* ── 工具 ── */
 function escapeHtml(s) {
   if (!s) return "";
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
-function waitForBridge(retries) {
-  if (retries === undefined) retries = 20;
+// 等待桥接 SDK 加载完成，然后初始化
+function waitForBridge(retries = 20) {
   if (window.AstrBotPluginPage) {
-    var modal = document.getElementById("modal");
-    var footer = document.createElement("div");
+    // 桥接就绪，初始化
+    const modal = document.getElementById("modal");
+    const footer = document.createElement("div");
     footer.className = "modal-footer";
-    footer.innerHTML = "<button onclick='closeModal()'>取消</button><button onclick='saveEdit()' style='background:var(--accent);color:#fff;border:none'>💾 保存</button>";
-    if (modal) modal.querySelector(".modal-body").after(footer);
+    footer.innerHTML = `<button onclick="closeModal()">取消</button><button onclick="saveEdit()" style="background:var(--accent);color:#fff;border:none">💾 保存</button>`;
+    modal.querySelector(".modal-body").after(footer);
     loadGraphOverview();
     return;
   }
   if (retries <= 0) {
     console.error("桥接 SDK 加载超时");
-    var pg = document.getElementById("page-graph");
-    if (pg) pg.innerHTML = "<div style='padding:40px;text-align:center;color:#f85149'>❌ 桥接 SDK 加载失败</div>";
+    document.getElementById("page-graph").innerHTML = '<div style="padding:40px;text-align:center;color:#f85149">❌ 桥接 SDK 加载失败，请刷新页面重试</div>';
     return;
   }
-  setTimeout(function() { waitForBridge(retries - 1); }, 200);
+  setTimeout(() => waitForBridge(retries - 1), 200);
 }
 
+// DOMContentLoaded 后开始等待桥接
 document.addEventListener("DOMContentLoaded", () => waitForBridge());

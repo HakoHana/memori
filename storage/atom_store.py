@@ -95,32 +95,20 @@ class AtomStore(BaseDbStore):
             return atom_id
 
     async def insert_many(self, atoms: list[MemoryAtom]) -> list[int]:
-        """批量插入原子（使用 executemany，显著提升性能）"""
+        """批量插入原子（共享连接 + 事务内循环，避免重复 open/close）"""
         if not atoms:
             return []
 
-        # 先插入主表
-        conn = await self._get_conn()
-        cursor = await conn.executemany(_INSERT_SQL, [self._atom_values(a) for a in atoms])
-
-        # 获取 lastrowid 并回填 atom_id
-        # executemany 只返回最后一条的 rowid，所以需要单独获取
-        # 策略：读取自增计数，然后计算 ID 范围
-        count_row = await conn.execute_fetchall(
-            "SELECT COUNT(*) FROM memory_atoms WHERE user_id=? AND created_at>=?",
-            (atoms[0].user_id, atoms[0].created_at - 0.01),
-        )
-        # 更可靠的方式：逐条插入但共享连接
-        # 实际上 executemany 后我们需要准确的 ID
-        # 改用事务内逐条插入 + 收集 ID（依然比多次 open/close 快）
         ids: list[int] = []
-        for atom in atoms:
-            c = await conn.execute(_INSERT_SQL, self._atom_values(atom))
-            aid = c.lastrowid
-            ids.append(aid)
-            await conn.execute(_INSERT_FTS_SQL, (aid, atom.content, atom.user_id))
-
-        await conn.commit()
+        async with self._connect() as db:
+            for atom in atoms:
+                c = await db.execute(_INSERT_SQL, self._atom_values(atom))
+                aid = c.lastrowid
+                ids.append(aid)
+                await db.execute(
+                    _INSERT_FTS_SQL, (aid, atom.content, atom.user_id),
+                )
+            await db.commit()
 
         for atom, aid in zip(atoms, ids):
             atom.atom_id = aid
@@ -290,8 +278,8 @@ class AtomStore(BaseDbStore):
     COLUMNS = (
         "id", "user_id", "diary_date", "atom_type", "content", "entities",
         "importance", "confidence", "access_count", "created_at", "last_accessed_at",
-        "ttl_days", "status", "session_id", "diary_ref", "embedding",
-        "embedding_model", "metadata", "diary_snippet", "expires_at", "decay_type",
+        "ttl_days", "expires_at", "decay_type", "status", "session_id", "diary_ref",
+        "diary_snippet", "embedding", "embedding_model", "metadata",
     )
 
     def _row_to_atom(self, row) -> MemoryAtom:

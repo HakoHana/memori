@@ -1364,6 +1364,14 @@
         }
       });
 
+      initDebug("测试API...");
+      try {
+        var testData = unwrapApiData(await apiRequest("stats")) || {};
+        initDebug("API OK, 原子:" + ((testData.atoms && testData.atoms.total) || "?"));
+      } catch (e) {
+        initDebug("API失败: " + (e.message || e), true);
+      }
+
       initDebug("加载数据...");
       fetchGraphStats();
       switchPage("graph");

@@ -125,9 +125,27 @@ class Capturer:
             if op_id:
                 await self.write_op_log.step(op_id, "atoms_stored")
 
-            # 日记重要度 = 最高原子重要度
+            # 同步写入全局事实表（去重）
             if diary_id > 0:
-                max_imp = max(a.importance for a in atoms)
+                max_imp = 0.5
+                for atom in atoms:
+                    try:
+                        fact_id = await self.atom_store.ensure_fact(
+                            content=atom.content,
+                            atom_type=atom.atom_type.value,
+                            importance=atom.importance,
+                            confidence=atom.confidence,
+                        )
+                        await self.atom_store.link_fact(
+                            diary_id=diary_id,
+                            fact_id=fact_id,
+                            importance=atom.importance,
+                            snippet=atom.diary_snippet,
+                        )
+                        if atom.importance > max_imp:
+                            max_imp = atom.importance
+                    except Exception:
+                        pass
                 try:
                     await self.diary_store.update_metadata(
                         user_id, today, importance=max_imp

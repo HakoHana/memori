@@ -339,18 +339,32 @@ class PageApi:
             did_val, date_str, content, topics, sentiment, status = row
             status = status or "active"
 
-            # 读该日记关联的原子（仅按 diary_id 精确匹配，旧数据无 diary_id 则不显示）
+            # 读该日记关联的事实（优先 atomic_facts 表，旧数据回退 memory_atoms）
             atoms = []
-            atom_rows = await self._fetch("""
-                SELECT id, content, atom_type, importance, diary_snippet
-                FROM memory_atoms WHERE diary_id=? AND status='active'
-                ORDER BY importance DESC
+            new_rows = await self._fetch("""
+                SELECT af.id, af.content, af.atom_type, dfl.importance, dfl.snippet
+                FROM atomic_facts af
+                JOIN diary_fact_links dfl ON af.id = dfl.fact_id
+                WHERE dfl.diary_id = ?
+                ORDER BY dfl.importance DESC
             """, (did,))
-            for r in atom_rows:
-                atoms.append({
-                    "id": r[0], "content": r[1], "type": r[2],
-                    "importance": r[3], "snippet": r[4] or "",
-                })
+            if new_rows:
+                for r in new_rows:
+                    atoms.append({
+                        "id": r[0], "content": r[1], "type": r[2],
+                        "importance": r[3], "snippet": r[4] or "",
+                    })
+            else:
+                atom_rows = await self._fetch("""
+                    SELECT id, content, atom_type, importance, diary_snippet
+                    FROM memory_atoms WHERE diary_id=? AND status='active'
+                    ORDER BY importance DESC
+                """, (did,))
+                for r in atom_rows:
+                    atoms.append({
+                        "id": r[0], "content": r[1], "type": r[2],
+                        "importance": r[3], "snippet": r[4] or "",
+                    })
 
             imp_stats = {"avg": 0, "max": 0, "count": len(atoms)}
             if atoms:

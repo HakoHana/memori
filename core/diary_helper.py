@@ -209,6 +209,30 @@ def mood_to_sentiment(mood: str) -> str:
     return mapping.get(mood.strip().lower(), "neutral")
 
 
+# ── [[实体]] 提取 ────────────────────────────────────────────
+
+WIKILINK_RE = re.compile(r"\[\[([^\[\]]+?)\]\]")
+
+
+def extract_wikilinks(text: str) -> list[str]:
+    """从正文中提取所有 [[实体名]]，去重、排序"""
+    if not text:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in WIKILINK_RE.finditer(text):
+        name = m.group(1).strip()
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+def build_wikilink(entity: str) -> str:
+    """为实体名生成 [[链接]] 语法"""
+    return f"[[{entity}]]"
+
+
 # ── 前端显示用 ────────────────────────────────────────────────
 
 def summarize_for_list(content: str, max_len: int = 150) -> str:

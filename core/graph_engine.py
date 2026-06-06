@@ -44,13 +44,61 @@ class GraphEngine:
         extracted = self._extract_from_atom(atom)
         if not extracted.nodes:
             return
-
-        # 先去重已存在的节点
         node_key_map = await self.graph_store.upsert_nodes(extracted.nodes)
-
-        # 添加边
         for edge in extracted.edges:
             await self.graph_store.add_edge(edge, node_key_map)
+
+    async def index_diary(
+        self,
+        diary_id: int,
+        content: str,
+        entities: list[str] | None = None,
+    ):
+        """从日记 content 中解析 [[链接]] 并建立图谱索引
+
+        这是图谱索引的主入口。写入日记时调用此方法，图谱自动同步。
+        """
+        from ..core.diary_helper import extract_wikilinks
+
+        # 1. 提取 [[链接]] + 合并传入实体
+        linked = extract_wikilinks(content)
+        all_entities: list[str] = []
+        seen: set[str] = set()
+        for name in linked + (entities or []):
+            name = name.strip()
+            if name and name not in seen:
+                seen.add(name)
+                all_entities.append(name)
+        if not all_entities:
+            return
+
+        # 2. 创建 entity 节点
+        nodes = [
+            GraphNode(
+                node_type="entity",
+                value=name,
+                canonical_value=self._canonicalize(name),
+                metadata={"diary_refs": 1},
+            )
+            for name in all_entities
+        ]
+        node_key_map = await self.graph_store.upsert_nodes(nodes)
+
+        # 3. 创建日记 → 实体 的边
+        for name in all_entities:
+            cv = self._canonicalize(name)
+            src_key = f"entity:{cv}"
+            src_id = node_key_map.get(src_key)
+            if not src_id:
+                continue
+            await self.graph_store.add_edge_by_ids(
+                edge_key=f"diary:{diary_id}:mentions:{cv}",
+                source_node_id=src_id,
+                target_node_id=0,  # diary node (optional)
+                relation_type="mentions",
+                source_memory_id=diary_id,
+                weight=1.0,
+            )
 
     async def reindex_all(self, user_id: str | None = None):
         """重建全部图谱"""

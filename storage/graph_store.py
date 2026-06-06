@@ -115,6 +115,33 @@ class GraphStore(BaseDbStore):
             await db.commit()
             return cursor.lastrowid
 
+    async def add_edge_by_ids(
+        self,
+        edge_key: str,
+        source_node_id: int,
+        target_node_id: int,
+        relation_type: str,
+        source_memory_id: int,
+        weight: float = 1.0,
+        confidence: float = 0.8,
+    ) -> int | None:
+        """按节点 ID 直接添加边（不通过 GraphEdge 对象）"""
+        now = self._now_iso()
+        async with self._connect() as db:
+            cursor = await db.execute("""
+                INSERT INTO graph_edges
+                (edge_key, semantic_key, source_node_id, target_node_id, relation_type,
+                 source_memory_id, weight, confidence, status, metadata, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', '{}', ?, ?)
+                ON CONFLICT(edge_key) DO UPDATE SET weight = weight + 0.1, updated_at = excluded.updated_at
+            """, (
+                edge_key, f"{relation_type}:{source_node_id}:{target_node_id}",
+                source_node_id, target_node_id, relation_type,
+                source_memory_id, weight, confidence, now, now,
+            ))
+            await db.commit()
+            return cursor.lastrowid
+
     async def delete_memory_edges(self, source_memory_id: int):
         async with self._connect() as db:
             await db.execute("DELETE FROM graph_edges WHERE source_memory_id = ?", (source_memory_id,))

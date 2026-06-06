@@ -136,7 +136,7 @@ class MemoryCore:
             atom_store=self.atom_store,
             prompts_dir=prompts_dir,
             config=self.config,
-            on_atoms_created=self.graph_engine.index_atom,
+            on_atoms_created=self.graph_engine.index_diary,
             write_op_log=self.write_op_log,
         )
         self.persona_engine = PersonaEngine(

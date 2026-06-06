@@ -118,13 +118,16 @@ class Capturer:
             if op_id:
                 await self.write_op_log.step(op_id, "atoms_stored")
 
-            # 通知图谱引擎（异步不阻塞）
-            if self.on_atoms_created:
-                for atom in atoms:
-                    try:
-                        await self.on_atoms_created(atom)
-                    except Exception:
-                        pass
+        # 3. 更新图谱（从 diary content 解析 [[链接]]，原子 entities 合并进入）
+        #    图谱是 diary 写入的副产物，不需要独立调用
+        if diary_id > 0 and self.on_atoms_created:
+            all_entities: list[str] = []
+            for atom in atoms:
+                all_entities.extend(atom.entities or [])
+            try:
+                await self.on_atoms_created(diary_id, diary_content, all_entities)
+            except Exception:
+                pass
 
         if op_id:
             await self.write_op_log.complete(op_id)

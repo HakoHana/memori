@@ -1,9 +1,14 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
-:root {
+:root, [data-theme="dark"] {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
   --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff;
   --danger: #f85149; --success: #3fb950;
   --radius: 8px; --space: 16px;
+}
+[data-theme="light"] {
+  --bg: #ffffff; --surface: #f6f8fa; --border: #d0d7de;
+  --text: #1f2328; --text2: #656d76; --accent: #0969da;
+  --danger: #cf222e; --success: #1a7f37;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
 #app { display: flex; height: 100vh; }

@@ -1,3 +1,21 @@
+/* ═══ 主题切换 ═══ */
+(function() {
+  var theme = localStorage.getItem("mem-theme") || "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  document.addEventListener("DOMContentLoaded", function() {
+    var btn = document.getElementById("theme-btn");
+    if (btn) btn.innerHTML = theme === "dark" ? "☀️ 切换亮色模式" : "🌙 切换暗色模式";
+  });
+})();
+function toggleTheme() {
+  var cur = document.documentElement.getAttribute("data-theme") || "dark";
+  var next = cur === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("mem-theme", next);
+  var btn = document.getElementById("theme-btn");
+  if (btn) btn.innerHTML = next === "dark" ? "☀️ 切换亮色模式" : "🌙 切换暗色模式";
+}
+
 window.addEventListener("error", function(e) {
   console.error("JS ErrorEvent:", e.message, e.filename, e.lineno, e.error);
   if (e.message === "Script error." || !e.error) return;

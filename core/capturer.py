@@ -118,6 +118,16 @@ class Capturer:
             if op_id:
                 await self.write_op_log.step(op_id, "atoms_stored")
 
+            # 日记重要度 = 最高原子重要度
+            if diary_id > 0:
+                max_imp = max(a.importance for a in atoms)
+                try:
+                    await self.diary_store.update_metadata(
+                        user_id, today, importance=max_imp
+                    )
+                except Exception:
+                    pass
+
         # 3. 更新图谱（从 diary content 解析 [[链接]]，原子 entities 合并进入）
         #    图谱是 diary 写入的副产物，不需要独立调用
         if diary_id > 0 and self.on_atoms_created:

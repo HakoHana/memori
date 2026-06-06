@@ -159,20 +159,40 @@ class AtomStore(BaseDbStore):
     # ═══════════════════════════════════════════════════
 
     async def search_fts(self, query: str, user_id: str, k: int = 5) -> list[MemoryAtom]:
-        """FTS5 全文搜索"""
+        """FTS5 全文搜索（按重要度 × BM25 排序）"""
         safe_query = self._sanitize_fts_query(query)
         if not safe_query:
             return []
 
+        # 多取一些候选，按重要度降序重排，让高重要度的匹配优先
+        candidates = k * 3
         rows = await self.fetch("""
-            SELECT a.* FROM memory_atoms a
+            SELECT a.*, rank FROM memory_atoms a
             JOIN memory_atoms_fts f ON a.id = f.atom_id
             WHERE memory_atoms_fts MATCH ? AND a.user_id = ? AND a.status = 'active'
             ORDER BY rank
             LIMIT ?
-        """, (safe_query, user_id, k))
+        """, (safe_query, user_id, candidates))
 
-        return [self._row_to_atom(r) for r in rows]
+        if not rows:
+            return []
+
+        # 按 (importance × 0.6 + rank_normalized × 0.4) 排序
+        # rank 是负值（越接近0越匹配），归一化到 0~1
+        max_rank = abs(rows[-1][-1]) if rows else 1  # 最差匹配的绝对值
+        if max_rank < 0.001:
+            max_rank = 1
+
+        scored = []
+        for r in rows:
+            atom = self._row_to_atom(r)
+            rank_val = abs(r[-1])  # 最后一列是 rank
+            rank_norm = 1.0 - min(1.0, rank_val / max_rank)  # 0~1，越高越匹配
+            score = atom.importance * 0.6 + rank_norm * 0.4
+            scored.append((score, atom))
+
+        scored.sort(key=lambda x: -x[0])
+        return [sa[1] for sa in scored[:k]]
 
     async def get_by_user(self, user_id: str, status: str | None = "active") -> list[MemoryAtom]:
         """获取用户所有原子"""

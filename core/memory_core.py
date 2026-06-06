@@ -122,6 +122,11 @@ class MemoryCore:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+        # 启动重要度衰减定期任务（每天一次）
+        decay_task = asyncio.ensure_future(self._decay_loop())
+        self._background_tasks.add(decay_task)
+        decay_task.add_done_callback(self._background_tasks.discard)
+
         # 4. 图谱引擎
         self.graph_engine = GraphEngine(
             graph_store=self.graph_store,
@@ -196,6 +201,28 @@ class MemoryCore:
                             logger.warning(f"[Memory] 索引检查: {issue}")
         except Exception as e:
             logger.warning(f"[Memory] 索引检查失败: {e}")
+
+    async def _decay_loop(self):
+        """定期衰减重要度（每天运行一次）"""
+        while not self._initialized:
+            await asyncio.sleep(3600)  # 等插件就绪
+        while True:
+            try:
+                await asyncio.sleep(86400)  # 24 小时
+                if not self.atom_store:
+                    continue
+                # 衰减 memory_atoms
+                await self.atom_store.apply_decay(0.99)
+                # 也衰减 atomic_facts
+                await self.atom_store.execute(
+                    "UPDATE atomic_facts SET importance = importance * 0.99 WHERE importance > 0.1"
+                )
+                logger.info("[Memory] 重要度衰减完成")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[Memory] 重要度衰减异常: {e}")
+                await asyncio.sleep(3600)
 
     async def destroy(self):
         """优雅关闭所有模块"""

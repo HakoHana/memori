@@ -53,16 +53,9 @@ class MemoryPlugin(Star):
         if not self.memory_core:
             return
         try:
-            # 存储用户消息到会话
-            cs = self.memory_core.conversation_store
+            # 如果是指令已在 on_message 处理过，阻止 LLM
             raw_text = event.get_message_str() if hasattr(event, 'get_message_str') else str(event.message_str)
-
-            # 检测指令 → 处理并阻止 LLM 响应
-            if raw_text and raw_text.startswith("/"):
-                await self.memory_core._handle_command(
-                    self.memory_core.context_provider.get_user_id(event),
-                    raw_text,
-                )
+            if raw_text.startswith("/"):
                 if hasattr(req, 'prompt'):
                     req.prompt = None
                 if req.contexts:
@@ -70,11 +63,12 @@ class MemoryPlugin(Star):
                 event.message_obj.message_str = ""
                 return
 
+            # 存储用户消息到会话
+            cs = self.memory_core.conversation_store
             if cs and raw_text:
                 sid = await cs.get_session_id(event)
                 uid = await cs.get_user_id(event)
-                if raw_text:
-                    await cs.add_message(sid, uid, "user", raw_text)
+                await cs.add_message(sid, uid, "user", raw_text)
 
             # 记忆注入
             result = await self.memory_core.on_message(event)
@@ -90,6 +84,13 @@ class MemoryPlugin(Star):
         try:
             uid = self.memory_core.context_provider.get_user_id(event)
             txt = self.memory_core.context_provider.get_conversation_text(event)
+
+            # 检测指令 → 在 LLM 处理前拦截，直接回复
+            if txt and txt.startswith("/"):
+                await self.memory_core._handle_command(uid, txt)
+                event.message_obj.message_str = ""
+                return
+
             if uid and txt:
                 logger.debug(f"[Memory] on_message: {uid}")
                 await self.memory_core.consolidation_manager.on_message(uid, txt)

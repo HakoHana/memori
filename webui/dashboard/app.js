@@ -829,7 +829,11 @@
     if (state.memory.keyword) params.set("keyword", state.memory.keyword);
 
     try {
-      var data = unwrapApiData(await apiRequest("memories?" + params.toString())) || {};
+      var response = await apiRequest("memories?" + params.toString());
+      var data = unwrapApiData(response) || {};
+      // Debug: show in console
+      console.log("fetchMemories response:", JSON.stringify(response).slice(0,500));
+      console.log("fetchMemories total:", data.total, "items:", data.items && data.items.length);
       state.memory.total = data.total || 0;
       state.memory.hasMore = data.items && data.items.length >= state.memory.pageSize;
       state.memory.selected.clear();

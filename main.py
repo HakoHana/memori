@@ -60,7 +60,9 @@ class MemoryPlugin(Star):
                     req.prompt = None
                 if req.contexts:
                     req.contexts.clear()
-                event.message_obj.message_str = ""
+                event.message_str = ""
+                if hasattr(event, 'message_obj') and event.message_obj:
+                    event.message_obj.message_str = ""
                 return
 
             # 存储用户消息到会话
@@ -88,7 +90,9 @@ class MemoryPlugin(Star):
             # 检测指令 → 在 LLM 处理前拦截，直接回复
             if txt and txt.startswith("/"):
                 await self.memory_core._handle_command(uid, txt)
-                event.message_obj.message_str = ""
+                event.message_str = ""
+                if hasattr(event, 'message_obj') and event.message_obj:
+                    event.message_obj.message_str = ""
                 return
 
             if uid and txt:

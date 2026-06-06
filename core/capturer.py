@@ -107,10 +107,17 @@ class Capturer:
 
         # 2. 提取原子（从 body 提取，不含 frontmatter）
         atom_source = diary_body if diary_body else (judge_result.context_summary or "")
-        atoms = await self._extract_atoms(atom_source, user_id, today)
-        for atom in atoms:
+        raw_atoms = await self._extract_atoms(atom_source, user_id, today)
+
+        # 2a. 去重强化：检查是否已有相似原子，有则强化不走插入
+        unique_atoms: list = []
+        for atom in raw_atoms:
             atom.diary_id = diary_id
             atom.prepare_insert()
+            if not await self._reinforce_if_duplicate(atom, user_id):
+                unique_atoms.append(atom)
+
+        atoms = unique_atoms
         if atoms:
             ids = await self.atom_store.insert_many(atoms)
             for atom, aid in zip(atoms, ids):
@@ -154,6 +161,44 @@ class Capturer:
         """为画像更新提取原子（独立于日记流程）"""
         today = time.strftime("%Y-%m-%d")
         return await self._extract_atoms(diary_content, user_id, today)
+
+    async def _reinforce_if_duplicate(self, atom, user_id: str) -> bool:
+        """检查原子是否与已有原子相似，相似则强化重要度并返回 True"""
+        try:
+            content = atom.content or ""
+            # 提取字符 bigram 作为 token（中英文通用）
+            chars = content.replace(" ", "")
+            if len(chars) < 4:
+                return False
+            tokens = {chars[i:i+2] for i in range(len(chars) - 1)}
+            if len(tokens) < 2:
+                return False
+
+            # FTS 搜索相似原子
+            query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
+            existing = await self.atom_store.search_fts(query, user_id, k=5)
+            for ex in existing:
+                ex_chars = (ex.content or "").replace(" ", "")
+                if len(ex_chars) < 4:
+                    continue
+                ex_tokens = {ex_chars[i:i+2] for i in range(len(ex_chars) - 1)}
+                if not ex_tokens:
+                    continue
+                union = len(tokens | ex_tokens)
+                if union == 0:
+                    continue
+                jaccard = len(tokens & ex_tokens) / union
+                if jaccard >= 0.6:
+                    # 强化：重要度 +0.05（上限1.0）
+                    boosted = min(1.0, ex.importance + 0.05)
+                    await self.atom_store.execute(
+                        "UPDATE memory_atoms SET importance=?, confidence=?, access_count=access_count+1 WHERE id=?",
+                        (boosted, max(atom.confidence, ex.confidence), ex.atom_id),
+                    )
+                    return True
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _mood_text(mood: str) -> str:

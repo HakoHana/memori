@@ -89,10 +89,20 @@ class MemoryPlugin(Star):
 
             # 检测指令 → 在 LLM 处理前拦截，直接回复
             if txt and txt.startswith("/"):
-                await self.memory_core._handle_command(uid, txt)
                 event.message_str = ""
                 if hasattr(event, 'message_obj') and event.message_obj:
                     event.message_obj.message_str = ""
+
+                if txt.strip() == "/记忆重构":
+                    from astrbot.core.message.message_event_result import MessageChain
+                    chain = MessageChain().message("🔄 正在逐条重构旧记忆，请稍候...")
+                    await event.send(chain)
+
+                    result = await self.memory_core.command_handler.handle_rebuild(uid, [])
+                    chain2 = MessageChain().message(result)
+                    await event.send(chain2)
+                else:
+                    await self.memory_core._handle_command(uid, txt)
                 return
 
             if uid and txt:

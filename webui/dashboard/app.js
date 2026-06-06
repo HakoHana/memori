@@ -1087,13 +1087,15 @@
       fetchMemories();
     }, 300));
 
-    document.getElementById("mem-session").addEventListener("input", debounce(function() {
+    var memSession = document.getElementById("mem-session");
+    if (memSession) memSession.addEventListener("input", debounce(function() {
       state.memory.session = this.value.trim();
       state.memory.page = 1;
       fetchMemories();
     }, 300));
 
-    document.getElementById("mem-status").addEventListener("change", function() {
+    var memStatus = document.getElementById("mem-status");
+    if (memStatus) memStatus.addEventListener("change", function() {
       state.memory.status = this.value;
       state.memory.page = 1;
       fetchMemories();
@@ -1112,7 +1114,8 @@
       if (state.memory.hasMore) { state.memory.page++; fetchMemories(); }
     });
     document.getElementById("batch-delete").addEventListener("click", batchDelete);
-    document.getElementById("batch-archive").addEventListener("click", batchArchive);
+    var batchArchiveBtn = document.getElementById("batch-archive");
+    if (batchArchiveBtn) batchArchiveBtn.addEventListener("click", batchArchive);
     document.getElementById("batch-clear").addEventListener("click", function() {
       state.memory.selected.clear();
       renderMemoriesVirtual();
@@ -1134,20 +1137,20 @@
      ================================================================ */
   async function runRecall() {
     var query = document.getElementById("recall-query").value.trim();
-    if (!query) return showToast(window.t("recall.enterQuery"), true);
+    if (!query) return showToast("请输入查询内容", true);
     var k = parseInt(document.getElementById("recall-k").value) || 5;
-    var session = document.getElementById("recall-session").value.trim() || null;
     var btn = document.getElementById("recall-search-btn");
     btn.disabled = true;
 
     try {
-      var data = unwrapApiData(await apiRequest("recall/test", {
-        method: "POST",
-        body: { query: query, k: k, session_id: session },
-      }));
+      var params = new URLSearchParams();
+      params.set("keyword", query);
+      params.set("page_size", String(k));
+      var data = unwrapApiData(await apiRequest("memories?" + params.toString())) || {};
+      data.elapsed = "";
       renderRecallResults(data);
     } catch (e) {
-      showToast(e.message || window.t("recall.fail"), true);
+      showToast(e.message || "搜索失败", true);
     } finally {
       btn.disabled = false;
     }
@@ -1232,32 +1235,21 @@
     try {
       var data = unwrapApiData(await apiRequest("stats")) || {};
       renderSystemOverview(data);
-
-      /* Backups */
-      try {
-        var backups = unwrapApiData(await apiRequest("backups")) || {};
-        data.backups = backups.backups || [];
-        renderSystemOverview(data);
-      } catch (_) {
-        data.backupsUnavailable = true;
-        renderSystemOverview(data);
-      }
     } catch (e) {
-      showToast(e.message || window.t("misc.systemFail"), true);
+      showToast(e.message || "系统加载失败", true);
     }
   }
 
   function renderSystemOverview(data) {
     state._systemCache = data;
-    document.getElementById("ss-total").textContent = data.total_memories || data.total_count || "0";
-    var sb = data.status_breakdown || {};
-    document.getElementById("ss-active").textContent = sb.active || 0;
-    document.getElementById("ss-archived").textContent = sb.archived || 0;
-    document.getElementById("ss-deleted").textContent = sb.deleted || 0;
+    var atoms = data.atoms || {};
+    document.getElementById("ss-total").textContent = atoms.total || 0;
+    document.getElementById("ss-imp").textContent = atoms.total > 0 ? "--" : "--";
     document.getElementById("ss-nodes").textContent = data.graph_nodes || 0;
-    document.getElementById("ss-atoms").textContent = data.atom_count || 0;
+    document.getElementById("ss-edges").textContent = data.graph_edges || 0;
+    document.getElementById("ss-diaries").textContent = data.diary_months || 0;
 
-    var dist = data.importance_distribution || {};
+    var byType = atoms.by_type || {};
     var bins = ["0-1","1-2","2-3","3-4","4-5","5-6","6-7","7-8","8-9","9-10"];
     var maxV = 1;
     bins.forEach(function(b) { maxV = Math.max(maxV, dist[b] || 0); });
@@ -1326,11 +1318,9 @@
   async function fetchGraphStats() {
     try {
       var data = unwrapApiData(await apiRequest("stats")) || {};
-      document.getElementById("gs-total").textContent = data.total_memories || data.total_count || "0";
+      document.getElementById("gs-total").textContent = (data.atoms && data.atoms.total) || data.diary_months || "0";
       document.getElementById("gs-nodes").textContent = data.graph_nodes || "0";
       document.getElementById("gs-edges").textContent = data.graph_edges || "0";
-      var sessions = data.sessions || {};
-      document.getElementById("gs-sessions").textContent = Object.keys(sessions).length || "0";
     } catch (_) {}
   }
 

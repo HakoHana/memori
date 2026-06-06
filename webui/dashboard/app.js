@@ -442,7 +442,7 @@
     /* Key Facts */
     if (keyFacts.length) {
       html += '<div class="peek-section"><div class="peek-section-title">' + window.t("detail.keyFacts") + '</div><div class="peek-fact-list">';
-      keyFacts.forEach(function(f) { html += '<div class="peek-fact-item">' + esc(String(f)) + '</div>'; });
+      keyFacts.forEach(function(f) { html += '<div class="peek-fact-item">' + esc(f.content || f.text || String(f)) + ' <span style="font-size:0.75em;color:var(--text-secondary)">(' + (f.type || "") + ' · ' + (f.importance || "") + ')</span></div>'; });
       html += '</div></div>';
     }
 

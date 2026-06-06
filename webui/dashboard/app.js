@@ -884,7 +884,7 @@
           summary: (item.content || "").slice(0, 200),
           content: item.content || "",
           memory_type: typeStr,
-          importance: item.avg_importance != null ? Math.round(item.avg_importance * 10) : 5,
+          importance: item.avg_importance != null ? Math.round(item.avg_importance * 10 * 10) / 10 : 5,
           status: item.status || "active",
           created_at: tsStr,
           updated_at: tsStr,

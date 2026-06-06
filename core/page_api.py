@@ -174,8 +174,8 @@ class PageApi:
             where = " AND ".join(conditions)
             rows = await self._fetch(f"""
                 SELECT d.id, d.date, d.content, d.created_at, d.updated_at, COALESCE(d.status,'active'),
-                       (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_id=d.id AND a.status='active'),
-                       (SELECT ROUND(AVG(a.importance),2) FROM memory_atoms a WHERE a.diary_id=d.id AND a.status='active')
+                       (SELECT COUNT(*) FROM memory_atoms a WHERE a.diary_date=d.date AND a.user_id=d.user_id AND a.status='active'),
+                       (SELECT ROUND(AVG(a.importance),2) FROM memory_atoms a WHERE a.diary_date=d.date AND a.user_id=d.user_id AND a.status='active')
                 FROM diary_entries d WHERE {where}
                 ORDER BY d.id DESC LIMIT ? OFFSET ?
             """, params + [page_size, (page - 1) * page_size])
@@ -341,11 +341,19 @@ class PageApi:
 
             # 读该日记关联的原子
             atoms = []
+            # 先按 diary_id 精确查（新原子带正确关联）
             atom_rows = await self._fetch("""
                 SELECT id, content, atom_type, importance, diary_snippet
                 FROM memory_atoms WHERE diary_id=? AND status='active'
                 ORDER BY importance DESC
             """, (did,))
+            # 如果无结果，按日期回退查（旧原子兼容）
+            if not atom_rows:
+                atom_rows = await self._fetch("""
+                    SELECT id, content, atom_type, importance, diary_snippet
+                    FROM memory_atoms WHERE diary_date=? AND status='active'
+                    ORDER BY importance DESC
+                """, (date_str,))
             for r in atom_rows:
                 atoms.append({
                     "id": r[0], "content": r[1], "type": r[2],

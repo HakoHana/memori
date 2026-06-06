@@ -128,6 +128,22 @@
         </div>
     </div>
 
+    <div class="card">
+        <h2> 重要度衰减</h2>
+        <div class="field">
+            <label>
+                <input type="checkbox" id="decay_enabled">
+                启用自动衰减（每天运行）
+            </label>
+            <div class="hint">关闭后重要度不会随时间下降，LLM 给的高分将一直保持</div>
+        </div>
+        <div class="field">
+            <label for="decay_rate">衰减率</label>
+            <div class="hint">0.99 = 每天衰减 1%，0.95 = 每天衰减 5%。值越小衰减越快</div>
+            <input type="number" id="decay_rate" min="0.9" max="1.0" step="0.01">
+        </div>
+    </div>
+
     <button class="save-btn" onclick="saveConfig"> 保存配置</button>
     <div id="status" class="status" style="display:none"></div>
 

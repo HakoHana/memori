@@ -70,11 +70,26 @@
         "type": "string",
         "default": "system_prompt_suffix",
         "options": [
-            {"value": "system_prompt_suffix", "label": "系统提示词末尾"},
-            {"value": "user_message_prefix", "label": "用户消息之前"},
-            {"value": "user_message_suffix", "label": "用户消息之后"},
-            {"value": "knowledge_section", "label": "知识库区域"},
-            {"value": "manual_only", "label": "不注入，仅手动调用"}
+            {
+                "value": "system_prompt_suffix",
+                "label": "系统提示词末尾"
+            },
+            {
+                "value": "user_message_prefix",
+                "label": "用户消息之前"
+            },
+            {
+                "value": "user_message_suffix",
+                "label": "用户消息之后"
+            },
+            {
+                "value": "knowledge_section",
+                "label": "知识库区域"
+            },
+            {
+                "value": "manual_only",
+                "label": "不注入，仅手动调用"
+            }
         ]
     },
     "injection_template": {
@@ -87,5 +102,17 @@
         "description": "是否用 <memory> 标签包裹注入的记忆内容",
         "type": "bool",
         "default": true
+    },
+    "decay_enabled": {
+        "description": "启用重要度自动衰减（每天运行）",
+        "type": "bool",
+        "default": true
+    },
+    "decay_rate": {
+        "description": "衰减率（0.99=每天1%，0.95=每天5%）",
+        "type": "float",
+        "default": 0.99,
+        "min": 0.9,
+        "max": 1.0
     }
 }

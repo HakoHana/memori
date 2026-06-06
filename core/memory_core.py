@@ -205,19 +205,24 @@ class MemoryCore:
     async def _decay_loop(self):
         """定期衰减重要度（每天运行一次）"""
         while not self._initialized:
-            await asyncio.sleep(3600)  # 等插件就绪
+            await asyncio.sleep(3600)
         while True:
             try:
-                await asyncio.sleep(86400)  # 24 小时
+                await asyncio.sleep(86400)  # 24 小时间隔
                 if not self.atom_store:
                     continue
-                # 衰减 memory_atoms
-                await self.atom_store.apply_decay(0.99)
-                # 也衰减 atomic_facts
+                # 从配置读取衰减率
+                rate = float(self.config.get("decay_rate", 0.99))
+                enabled = self.config.get("decay_enabled", True)
+                if not enabled:
+                    continue
+                if rate <= 0 or rate >= 1.0:
+                    continue
+                await self.atom_store.apply_decay(rate)
                 await self.atom_store.execute(
-                    "UPDATE atomic_facts SET importance = importance * 0.99 WHERE importance > 0.1"
+                    f"UPDATE atomic_facts SET importance = importance * {rate} WHERE importance > 0.1"
                 )
-                logger.info("[Memory] 重要度衰减完成")
+                logger.info(f"[Memory] 重要度衰减完成 (rate={rate})")
             except asyncio.CancelledError:
                 break
             except Exception as e:

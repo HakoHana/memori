@@ -20,6 +20,8 @@ async function loadConfig {
         setValue('injection_use_tag', config.injection_use_tag ?? true);
         setValue('recall_count', config.recall_count ?? 5);
         setValue('recall_max_tokens', config.recall_max_tokens ?? 500);
+        setValue('decay_enabled', config.decay_enabled ?? true);
+        setValue('decay_rate', config.decay_rate ?? 0.99);
 
         // 高亮选中的 radio
         document.querySelectorAll('.radio-group label').forEach(el => {
@@ -49,6 +51,8 @@ async function saveConfig {
         injection_use_tag: getValue('injection_use_tag') === true || getValue('injection_use_tag') === 'true',
         recall_count: parseInt(getValue('recall_count')) || 5,
         recall_max_tokens: parseInt(getValue('recall_max_tokens')) || 500,
+        decay_enabled: getValue('decay_enabled') === true || getValue('decay_enabled') === 'true',
+        decay_rate: parseFloat(getValue('decay_rate')) || 0.99,
     };
 
     try {

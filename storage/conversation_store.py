@@ -58,8 +58,14 @@ class ConversationStore(BaseDbStore):
             )
             await db.commit()
 
-    async def get_recent_context(self, session_id: str, limit: int = 20) -> str:
-        """获取最近的对话上下文（用于写日记）"""
+    async def get_recent_context(self, session_id: str, limit: int = 20,
+                                  user_name: str = "", bot_name: str = "我") -> str:
+        """获取最近的对话上下文（用于写日记/判断）
+
+        Args:
+            user_name: 用户称呼（Hako/渋夜旅等），空则显示 user_id
+            bot_name: Bot 自称，默认"我"
+        """
         async with self._connect() as db:
             rows = await db.execute_fetchall(
                 "SELECT role, content FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
@@ -67,11 +73,12 @@ class ConversationStore(BaseDbStore):
             )
         if not rows:
             return ""
-        # 按时间正序排列
         lines = []
         for r in reversed(rows):
-            prefix = "用户" if r[0] == "user" else "Bot"
-            lines.append(f"{prefix}: {r[1]}")
+            if r[0] == "user":
+                lines.append(f"{user_name or '用户'}: {r[1]}")
+            else:
+                lines.append(f"{bot_name}: {r[1]}")
         return "\n".join(lines)
 
     async def get_session_id(self, event) -> str:

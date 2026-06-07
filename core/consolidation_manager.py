@@ -120,6 +120,12 @@ class ConsolidationManager:
         self._mark_dirty(user_id)
         self._last_activity[user_id] = time.time()
 
+        # 给对话文本附加用户身份，让 LLM 能分清谁说了什么
+        if conversation_text and not conversation_text.startswith("["):
+            tagged = f"[{user_id}]: {conversation_text}"
+        else:
+            tagged = conversation_text
+
         # 检查触发条件
         should_trigger = False
         trigger_reason = ""
@@ -137,11 +143,11 @@ class ConsolidationManager:
         # B：即时捕捉（重要事件）
         if self.immediate_capture and not should_trigger:
             try:
-                judge = await self.capturer.should_capture(conversation_text)
+                judge = await self.capturer.should_capture(tagged)
                 if judge.should_remember and judge.importance >= 0.7:
                     should_trigger = True
                     trigger_reason = f"即时捕捉: {judge.reason}"
-                    result = await self.capturer.capture(user_id, conversation_text, judge)
+                    result = await self.capturer.capture(user_id, tagged, judge)
                     await self._after_consolidation(user_id, result)
                     return result
             except Exception:
@@ -162,14 +168,14 @@ class ConsolidationManager:
         logger.info(f"[Memory] 触发整理: {trigger_reason}")
 
         # 执行 L1 整理
-        judge = await self.capturer.should_capture(conversation_text)
+        judge = await self.capturer.should_capture(tagged)
         if not judge.should_remember:
             state.last_consolidated_at = time.time()
             state.l1_retry_count = 0
             self._mark_dirty(user_id)
             return None
 
-        result = await self._run_l1_with_retry(user_id, conversation_text, judge)
+        result = await self._run_l1_with_retry(user_id, tagged, judge)
         await self._after_consolidation(user_id, result)
         return result
 

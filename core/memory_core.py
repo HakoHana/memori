@@ -193,6 +193,14 @@ class MemoryCore:
         self._background_tasks.add(decay_task)
         decay_task.add_done_callback(self._background_tasks.discard)
 
+        # 启动时清理孤立原子（轻量，一次性的）
+        try:
+            cleaned = await self._cleanup_orphan_atoms()
+            if cleaned > 0:
+                logger.info(f"[Memory] 启动时清理了 {cleaned} 条孤立原子")
+        except Exception:
+            pass
+
         # 4. 图谱引擎
         self.graph_engine = GraphEngine(
             graph_store=self.graph_store,
@@ -306,6 +314,26 @@ class MemoryCore:
             except Exception as e:
                 logger.warning(f"[Memory] 重要度衰减异常: {e}")
                 await asyncio.sleep(3600)
+
+    async def _cleanup_orphan_atoms(self) -> int:
+        """清理孤立原子（无关联日记的原子），返回清理数"""
+        if not self.atom_store:
+            return 0
+        cursor = await self.atom_store.execute("""
+            UPDATE memory_atoms SET status='forgotten'
+            WHERE status='active' AND (
+                diary_id = 0 OR
+                (diary_id > 0 AND NOT EXISTS (
+                    SELECT 1 FROM diary_entries de WHERE de.id = diary_id
+                ))
+            )
+        """)
+        count = cursor.rowcount if cursor else 0
+        if count > 0:
+            await self.atom_store.execute(
+                "DELETE FROM memory_atoms_fts WHERE atom_id NOT IN (SELECT id FROM memory_atoms WHERE status='active')"
+            )
+        return count
 
     async def _archive_loop(self):
         """定期归档冷数据（每天运行一次）"""

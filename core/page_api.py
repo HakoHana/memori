@@ -282,45 +282,73 @@ class PageApi:
             return self._error(str(e))
 
     async def delete_memory(self):
-        """删除整篇日记及其关键事实"""
+        """删除日记条目，仅清理其独占的原子事实
+
+        规则：原子只关联了这篇日记 → 一起删
+              原子还被其他日记关联着 → 保留（只去掉本日记的关联）
+        """
         try:
             from quart import request
             body = await request.get_json()
             diary_id = body.get("id", 0)
+            if not diary_id:
+                return self._error("id required")
 
-            row = await self._fetch(
-                "SELECT date FROM diary_entries WHERE id=?", (diary_id,)
+            # 找出被本篇日记独占的原子（仅此一篇日记引用）
+            exclusive = await self._fetch("""
+                SELECT ma.id FROM memory_atoms ma
+                WHERE ma.diary_id=? AND ma.status='active'
+                AND (SELECT COUNT(*) FROM memory_atoms sub
+                     WHERE sub.content=ma.content AND sub.user_id=ma.user_id
+                     AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
+            """, (diary_id,))
+
+            exclusive_ids = [r[0] for r in exclusive]
+
+            # 从日记中删除原子关联
+            await self._execute(
+                "UPDATE memory_atoms SET status='forgotten' WHERE id IN ({})".format(
+                    ",".join("?" * len(exclusive_ids))
+                ) if exclusive_ids else "SELECT 1 WHERE 0",
+                exclusive_ids,
             )
-            if row:
-                date_str = row[0][0]
-                await self._execute("DELETE FROM diary_entries WHERE id=?", (diary_id,))
-                await self._execute(
-                    "DELETE FROM memory_atoms WHERE diary_date=? AND user_id=?",
-                    (date_str, self.core.config.get("default_user_id", "")),
-                )
-            return self._ok({"deleted": True})
+
+            # 删除日记本身
+            await self._execute("DELETE FROM diary_entries WHERE id=?", (diary_id,))
+
+            return self._ok({"deleted": True, "exclusive_atoms": len(exclusive_ids)})
         except Exception as e:
             return self._error(str(e))
 
     async def batch_delete_memories(self):
-        """批量删除日记"""
+        """批量删除日记（仅清理独占原子）"""
         try:
             from quart import request
             body = await request.get_json()
             ids = body.get("ids", [])
 
+            total_exclusive = 0
             for did in ids:
-                row = await self._fetch(
-                    "SELECT date FROM diary_entries WHERE id=?", (did,)
-                )
-                if row:
-                    date_str = row[0][0]
-                    await self._execute("DELETE FROM diary_entries WHERE id=?", (did,))
+                exclusive = await self._fetch("""
+                    SELECT ma.id FROM memory_atoms ma
+                    WHERE ma.diary_id=? AND ma.status='active'
+                    AND (SELECT COUNT(*) FROM memory_atoms sub
+                         WHERE sub.content=ma.content AND sub.user_id=ma.user_id
+                         AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
+                """, (did,))
+
+                eids = [r[0] for r in exclusive]
+                if eids:
                     await self._execute(
-                        "DELETE FROM memory_atoms WHERE diary_date=? AND user_id=?",
-                        (date_str, self.core.config.get("default_user_id", "")),
+                        "UPDATE memory_atoms SET status='forgotten' WHERE id IN ({})".format(
+                            ",".join("?" * len(eids))
+                        ), eids,
                     )
-            return self._ok({"deleted": len(ids)})
+                    total_exclusive += len(eids)
+
+                await self._execute("DELETE FROM diary_entries WHERE id=?", (did,))
+
+            return self._ok({"deleted": len(ids), "exclusive_atoms": total_exclusive})
         except Exception as e:
             return self._error(str(e))
 

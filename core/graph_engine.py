@@ -140,6 +140,48 @@ class GraphEngine:
         if entity_ids:
             await self.graph_store.update_cooccur(entity_ids)
 
+        # 5. same_user 边：匹配到 user 节点的实体，查同一 UID 的其他平台 ID
+        for name in all_entities:
+            cv = self._canonicalize(name)
+            for prefix in ("entity:", "user:"):
+                src_id = node_key_map.get(f"{prefix}{cv}")
+                if src_id:
+                    break
+            else:
+                continue
+            try:
+                uid_row = await self.atom_store.fetchone("""
+                    SELECT ui.uid FROM user_identities ui
+                    JOIN graph_nodes gn ON gn.node_type='user'
+                    WHERE gn.id=? AND ui.display_name=gn.value
+                    LIMIT 1
+                """, (src_id,))
+                if not uid_row:
+                    continue
+                uid = uid_row[0]
+                siblings = await self.atom_store.fetch("""
+                    SELECT platform_id FROM user_identities
+                    WHERE uid=? AND platform_id != ?
+                """, (uid, f"user:{cv}"))
+                for sib in siblings:
+                    pid = sib[0]
+                    sib_node = await self.graph_store.fetchone(
+                        "SELECT id FROM graph_nodes WHERE canonical_value=? AND node_type='user'",
+                        (self._canonicalize(pid),),
+                    )
+                    if sib_node and sib_node[0] != src_id:
+                        await self.graph_store.add_edge_by_ids(
+                            edge_key=f"same_user:{min(src_id,sib_node[0])}:{max(src_id,sib_node[0])}",
+                            source_node_id=src_id,
+                            target_node_id=sib_node[0],
+                            relation_type="same_user",
+                            source_memory_id=0,
+                            weight=1.0,
+                            confidence=1.0,
+                        )
+            except Exception:
+                pass
+
     async def reindex_all(self, user_id: str | None = None):
         """重建全部图谱"""
         atoms = await self.atom_store.get_by_user(user_id) if user_id else []

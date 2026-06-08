@@ -266,6 +266,55 @@ class GraphEngine:
             except Exception:
                 pass
 
+    async def upgrade_cooccur_to_relates(self, min_count: int = 3) -> int:
+        """将高频共现实体对升级为 relates_to 语义关联边
+
+        扫描 entity_cooccur，count >= min_count 且尚无 relates_to 边的，
+        创建 relation_type="relates_to" 的边。
+        返回创建的边数。
+        """
+        pairs = await self.graph_store.fetch("""
+            SELECT ec.entity_a_id, ec.entity_b_id, ec.count
+            FROM entity_cooccur ec
+            WHERE ec.count >= ?
+        """, (min_count,))
+        if not pairs:
+            return 0
+
+        created = 0
+        for a_id, b_id, cnt in pairs:
+            # 检查是否已有 relates_to 边
+            key1 = f"relates_to:{min(a_id,b_id)}:{max(a_id,b_id)}"
+            existing = await self.graph_store.fetchone(
+                "SELECT id FROM graph_edges WHERE edge_key=?", (key1,)
+            )
+            if existing:
+                continue
+
+            # 检查两个节点是否存在
+            na = await self.graph_store.fetchone(
+                "SELECT id, value FROM graph_nodes WHERE id=?", (a_id,)
+            )
+            nb = await self.graph_store.fetchone(
+                "SELECT id, value FROM graph_nodes WHERE id=?", (b_id,)
+            )
+            if not na or not nb:
+                continue
+
+            weight = min(1.0, cnt * 0.15)
+            await self.graph_store.add_edge_by_ids(
+                edge_key=key1,
+                source_node_id=a_id,
+                target_node_id=b_id,
+                relation_type="relates_to",
+                source_memory_id=0,
+                weight=weight,
+                confidence=0.6,
+            )
+            created += 1
+
+        return created
+
     async def reindex_all(self, user_id: str | None = None):
         """重建全部图谱"""
         atoms = await self.atom_store.get_by_user(user_id) if user_id else []

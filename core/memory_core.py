@@ -183,6 +183,12 @@ class MemoryCore:
         else:
             self.archiver = None
 
+        # 后台 relates_to 升级任务
+        if self.graph_engine:
+            relate_task = asyncio.ensure_future(self._relates_to_loop())
+            self._background_tasks.add(relate_task)
+            relate_task.add_done_callback(self._background_tasks.discard)
+
         # 索引一致性检查（异步，不阻塞初始化）
         task = asyncio.ensure_future(self._async_index_check(db_path))
         self._background_tasks.add(task)
@@ -311,6 +317,24 @@ class MemoryCore:
                 break
             except Exception as e:
                 logger.warning(f"[Memory] 归档异常: {e}")
+                await asyncio.sleep(3600)
+
+    async def _relates_to_loop(self):
+        """定期将高共现实体对升级为 relates_to 边"""
+        while not self._initialized:
+            await asyncio.sleep(3600)
+        while True:
+            try:
+                await asyncio.sleep(86400)
+                if not self.graph_engine:
+                    continue
+                created = await self.graph_engine.upgrade_cooccur_to_relates(min_count=3)
+                if created:
+                    logger.info(f"[Memory] relates_to 边升级: {created} 条")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[Memory] relates_to 升级异常: {e}")
                 await asyncio.sleep(3600)
 
     # ═══════════════════════════════════════════════════

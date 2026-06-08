@@ -119,34 +119,21 @@ class DiaryStore(BaseDbStore):
         return ' AND '.join(f'"{t}"*' for t in terms if t)
 
     async def append(self, user_id: str, date_str: str, content: str) -> int:
-        """追加内容到当日日记（追加到已有条目末尾，或创建新条目）
+        """写入一条日记 — 每条独立插入，不按日期去重
 
         Returns:
             日记条目的 ID
         """
         now = time.time()
         async with self._connect() as db:
-            row = await db.execute_fetchall(
-                "SELECT id, content FROM diary_entries WHERE user_id = ? AND date = ?",
-                (user_id, date_str),
-            )
-            if row:
-                entry_id, old_content = row[0]
-                time_tag = datetime.now().strftime("%H:%M")
-                new_content = f"{old_content}\n\n## {time_tag}\n\n{content.strip()}"
-                await db.execute(
-                    "UPDATE diary_entries SET content = ?, updated_at = ? WHERE id = ?",
-                    (new_content, now, entry_id),
-                )
-            else:
-                cursor = await db.execute("""
-                    INSERT INTO diary_entries
-                    (user_id, date, content, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (user_id, date_str, content.strip(), now, now))
-                entry_id = cursor.lastrowid
+            cursor = await db.execute("""
+                INSERT INTO diary_entries
+                (user_id, date, content, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, date_str, content.strip(), now, now))
+            entry_id = cursor.lastrowid
             await db.commit()
-            # 重建 FTS（content-sync 不会自动同步）
+            # 重建 FTS
             try:
                 await db.execute("INSERT INTO diary_fts(diary_fts) VALUES('rebuild')")
             except Exception:
@@ -202,23 +189,14 @@ class DiaryStore(BaseDbStore):
         return [r[0] for r in rows]
 
     async def upsert(self, user_id: str, date_str: str, content: str) -> bool:
-        """插入或更新日记（page_api 用）"""
+        """插入日记 — 每次都新建条目（不按日期去重）"""
         import time
         now = time.time()
         async with self._connect() as db:
-            row = await db.execute_fetchall(
-                "SELECT id FROM diary_entries WHERE user_id=? AND date=?", (user_id, date_str)
+            await db.execute(
+                "INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (user_id, date_str, content, now, now),
             )
-            if row:
-                await db.execute(
-                    "UPDATE diary_entries SET content=?, updated_at=? WHERE id=?",
-                    (content, now, row[0][0]),
-                )
-            else:
-                await db.execute(
-                    "INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
-                    (user_id, date_str, content, now, now),
-                )
             await db.commit()
             return True
 

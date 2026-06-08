@@ -212,12 +212,14 @@ class ConsolidationManager:
             new_threshold = min(state.warmup_threshold * 2, self.trigger_msg_count)
             state.warmup_threshold = 0 if new_threshold >= self.trigger_msg_count else new_threshold
 
-        # 检查 L3（画像更新）
+        # 检查 L3（画像更新 — 优先增量，兜底全量）
         if state.diary_count_since_persona >= self.persona_update_interval:
             try:
-                await self.persona_engine.full_rebuild(user_id)
+                ok = await self.persona_engine.incremental_update(user_id)
+                if not ok:
+                    await self.persona_engine.full_rebuild(user_id)
                 state.diary_count_since_persona = 0
-                logger.info(f"[Memory] 画像已更新: {user_id}")
+                logger.info(f"[Memory] 画像已更新: {user_id} (增量={ok})")
             except Exception as e:
                 logger.warning(f"[Memory] L3 画像更新失败: {e}")
 

@@ -85,17 +85,32 @@ class PersonaEngine:
     #  增量更新（默认，低成本）
     # ═══════════════════════════════════════════════════
 
-    async def incremental_update(self, uid: str, new_diaries: list[str],
-                                  new_facts: list[str]) -> bool:
-        """增量更新：旧画像 + 新增内容 → LLM diff → 应用"""
+    async def incremental_update(self, uid: str, new_diaries: list[str] | None = None,
+                                  new_facts: list[str] | None = None) -> bool:
+        """增量更新：旧画像 + 新增内容 → LLM diff → 应用
+
+        不传 new_diaries/new_facts 时自动从数据库查询最近内容。
+        """
         old_summary = await self.atom_store.get_persona_summary(uid) or "（还没有画像）"
+
+        # 没有传入新数据时自动查询
+        if not new_diaries and not new_facts:
+            recent = await self.diary_store.fetch("""
+                SELECT content FROM diary_entries
+                WHERE user_id=? ORDER BY id DESC LIMIT 5
+            """, (uid,))
+            new_diaries = [(r[0] or "")[:200] for r in recent]
+            # 没有事实更新时先跳过（增量更新只在新内容出现时才有意义）
+            if not new_diaries:
+                return False
+
         old_row = await self.atom_store.fetchone(
             "SELECT updated_at FROM user_persona WHERE uid=?", (uid,)
         )
         old_ts = old_row[0] if old_row else "从未"
 
-        diaries_text = "\n".join(f"- {d[:200]}" for d in new_diaries[-5:])
-        facts_text = "\n".join(f"- {f[:200]}" for f in new_facts[-10:])
+        diaries_text = "\n".join(f"- {d[:200]}" for d in (new_diaries or [])[-5:])
+        facts_text = "\n".join(f"- {f[:200]}" for f in (new_facts or [])[-10:])
 
         if not diaries_text and not facts_text:
             return False

@@ -71,7 +71,7 @@ class MemoryPlugin(Star):
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         if not self.memory_core:
             return
-        # 设置当前用户上下文（tools 等下游通过 contextvar 读取）
+        logger.debug(f"[Memory] on_llm_request enter")
         from .core.context import current_user_id
         uid = self.memory_core.context_provider.get_user_id(event)
         current_user_id.set(uid)
@@ -86,6 +86,7 @@ class MemoryPlugin(Star):
                 event.message_str = ""
                 if hasattr(event, 'message_obj') and event.message_obj:
                     event.message_obj.message_str = ""
+                logger.debug(f"[Memory] on_llm_request: cmd={raw_text[:30]}, 跳过 LLM")
                 return
 
             # 提取发送者信息
@@ -123,6 +124,10 @@ class MemoryPlugin(Star):
                 pass
         except Exception as e:
             logger.error(f"[Memory] on_llm_request 出错: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            logger.debug(f"[Memory] on_llm_request exit (raw={raw_text[:40] if raw_text else 'none'})")
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
     async def on_message(self, event: AstrMessageEvent):

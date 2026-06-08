@@ -15,8 +15,8 @@ from datetime import datetime
 from pathlib import Path
 
 SOURCE_DB = "/home/hako/data/plugin_data/astrbot_plugin_livingmemory/livingmemory.db"
-TARGET_DB = "/home/hako/data/plugin_data/astrbot_plugin_memory/memory.db"
-DATA_DIR  = "/home/hako/data/plugin_data/astrbot_plugin_memory"
+TARGET_DB = "/home/hako/data/plugin_data/Memory/memory.db"
+DATA_DIR  = "/home/hako/data/plugin_data/Memory"
 USER_NAME = "Hako"
 USER_UID  = "u_hako_main"
 
@@ -45,12 +45,66 @@ target.execute("PRAGMA journal_mode=WAL")
 target.execute("PRAGMA synchronous=NORMAL")
 target_c = target.cursor()
 
+# ── 补齐缺失表 ──
+MISSING_TABLES = {
+    "canonical_users": """
+        CREATE TABLE IF NOT EXISTS canonical_users (
+            uid TEXT PRIMARY KEY,
+            primary_name TEXT,
+            identity_confidence REAL DEFAULT 0.3,
+            created_at REAL,
+            updated_at REAL
+        )""",
+    "user_identities": """
+        CREATE TABLE IF NOT EXISTS user_identities (
+            platform_id TEXT PRIMARY KEY,
+            uid TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            display_name TEXT,
+            first_seen REAL,
+            last_seen REAL,
+            verified INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'auto'
+        )""",
+    "user_persona": """
+        CREATE TABLE IF NOT EXISTS user_persona (
+            uid TEXT PRIMARY KEY,
+            summary TEXT,
+            full_markdown TEXT,
+            known_ids TEXT DEFAULT '[]',
+            primary_name TEXT,
+            identity_confidence REAL DEFAULT 0.3,
+            tier TEXT DEFAULT 'new',
+            version INTEGER DEFAULT 1,
+            last_full_update REAL,
+            last_incremental_update REAL,
+            incremental_count INTEGER DEFAULT 0,
+            diary_count_since_full INTEGER DEFAULT 0,
+            created_at REAL,
+            updated_at REAL
+        )""",
+}
+existing_tables = set(
+    r[0] for r in target_c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+)
+for tname, ddl in MISSING_TABLES.items():
+    if tname not in existing_tables:
+        target_c.execute(ddl)
+        print(f"  ✅ 创建缺失表 {tname}")
+
 # ── 补齐缺失列 ──
 for col_def in [
     "ALTER TABLE user_persona ADD COLUMN tags TEXT DEFAULT '[]'",
     "ALTER TABLE user_persona ADD COLUMN tier TEXT DEFAULT 'new'",
 ]:
     try: target_c.execute(col_def)
+    except: pass
+
+# 补齐索引
+for idx_def in [
+    "CREATE INDEX IF NOT EXISTS idx_identity_uid ON user_identities(uid)",
+]:
+    try: target_c.execute(idx_def)
     except: pass
 
 # ── 3. 清理现有数据（保留表结构） ──
@@ -201,13 +255,11 @@ docs = source.execute("""
     FROM documents d ORDER BY d.created_at ASC
 """).fetchall()
 diary_inserted = 0
-diary_skipped = 0
 
 for doc in docs:
     doc = dict(doc)
     text = doc.get("text", "")
     if not text.strip():
-        diary_skipped += 1
         continue
 
     created_at = doc.get("created_at", time.time())
@@ -230,16 +282,7 @@ for doc in docs:
         f"{text}\n"
     )
 
-    # 检查重复
-    existing = target_c.execute(
-        "SELECT id FROM diary_entries WHERE user_id=? AND date=?",
-        (USER_NAME, date_str),
-    ).fetchone()
-
-    if existing:
-        diary_skipped += 1
-        continue
-
+    # 直接插入，每条文档作为一篇独立的日记
     target_c.execute("""
         INSERT INTO diary_entries
         (user_id, date, content, created_at, updated_at, status)
@@ -249,7 +292,7 @@ for doc in docs:
     diary_inserted += 1
 
 target.commit()
-print(f"  ✅ 导入 {diary_inserted} 篇日记，跳过 {diary_skipped} 篇重复")
+print(f"  ✅ 导入 {diary_inserted} 篇日记")
 
 # ── 8. 导入图谱数据 ──
 print("\n🔗 导入知识图谱...")

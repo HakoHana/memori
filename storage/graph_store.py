@@ -59,6 +59,21 @@ class GraphStore(BaseDbStore):
                 CREATE INDEX IF NOT EXISTS idx_graph_edges_memory
                 ON graph_edges(source_memory_id)
             """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS entity_cooccur (
+                    entity_a_id INTEGER NOT NULL,
+                    entity_b_id INTEGER NOT NULL,
+                    count INTEGER DEFAULT 1,
+                    last_updated TEXT,
+                    PRIMARY KEY (entity_a_id, entity_b_id)
+                )
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cooccur_a ON entity_cooccur(entity_a_id)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cooccur_b ON entity_cooccur(entity_b_id)
+            """)
             await db.commit()
 
     async def upsert_node(self, node: GraphNode) -> int:
@@ -141,6 +156,52 @@ class GraphStore(BaseDbStore):
             ))
             await db.commit()
             return cursor.lastrowid
+
+    async def update_cooccur(self, entity_ids: list[int]):
+        """批量更新实体共现计数"""
+        if len(entity_ids) < 2:
+            return
+        now = self._now_iso()
+        async with self._connect() as db:
+            for i in range(len(entity_ids)):
+                for j in range(i + 1, len(entity_ids)):
+                    a, b = entity_ids[i], entity_ids[j]
+                    if a == b:
+                        continue
+                    key = f"{min(a,b)}:{max(a,b)}"
+                    await db.execute("""
+                        INSERT INTO entity_cooccur (entity_a_id, entity_b_id, count, last_updated)
+                        VALUES (?, ?, 1, ?)
+                        ON CONFLICT(entity_a_id, entity_b_id)
+                        DO UPDATE SET count = count + 1, last_updated = excluded.last_updated
+                    """, (min(a, b), max(a, b), now))
+            await db.commit()
+
+    async def get_cooccurring(self, entity_id: int, k: int = 10) -> list[dict]:
+        """获取与某实体最常共现的实体"""
+        rows = await self.fetch("""
+            SELECT e.id, e.value, e.node_type, c.count
+            FROM entity_cooccur ec
+            JOIN graph_nodes e ON e.id = CASE WHEN ec.entity_a_id = ? THEN ec.entity_b_id ELSE ec.entity_a_id END
+            WHERE (ec.entity_a_id = ? OR ec.entity_b_id = ?)
+            ORDER BY ec.count DESC LIMIT ?
+        """, (entity_id, entity_id, entity_id, k))
+        return [{"id": r[0], "label": r[1], "type": r[2], "count": r[3]} for r in rows]
+
+    async def get_neighbors(self, entity_name: str, k: int = 20) -> list[dict]:
+        """获取实体的 k=1 邻居（实体→日记→其他实体）"""
+        cv = entity_name.strip().lower().replace(" ", "_")[:80]
+        rows = await self.fetch("""
+            SELECT DISTINCT e2.id, e2.value, e2.node_type, ge.relation_type, ge.weight
+            FROM graph_edges ge1
+            JOIN graph_nodes n1 ON ge1.source_node_id = n1.id
+            JOIN graph_edges ge2 ON ge1.source_memory_id = ge2.source_memory_id AND ge2.id != ge1.id
+            JOIN graph_nodes e2 ON ge2.source_node_id = e2.id
+            WHERE n1.canonical_value = ? AND n1.node_type = 'entity'
+            AND e2.node_type = 'entity'
+            LIMIT ?
+        """, (cv, k))
+        return [{"id": r[0], "label": r[1], "type": r[2], "relation": r[3], "weight": r[4]} for r in rows]
 
     async def delete_memory_edges(self, source_memory_id: int):
         async with self._connect() as db:

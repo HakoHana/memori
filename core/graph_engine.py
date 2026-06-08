@@ -56,7 +56,11 @@ class GraphEngine:
     ):
         """从日记 content 中解析 [[链接]] 并建立图谱索引
 
-        这是图谱索引的主入口。写入日记时调用此方法，图谱自动同步。
+        这是图谱索引的主入口。写入日记时调用此方法，图谱自动同步：
+        1. 创建日记节点 (node_type=diary)
+        2. 创建实体节点 (node_type=entity/user)
+        3. 创建 mentions 边 (entity → diary)
+        4. 更新 co_occur 计数
         """
         from ..core.diary_helper import extract_wikilinks
 
@@ -69,36 +73,71 @@ class GraphEngine:
             if name and name not in seen:
                 seen.add(name)
                 all_entities.append(name)
+
+        # 1a. 创建日记节点
+        diary_node_key = f"diary:{diary_id}"
+        diary_nodes = [
+            GraphNode(
+                node_type="diary",
+                value=f"日记 #{diary_id}",
+                canonical_value=f"diary_{diary_id}",
+                metadata={"diary_id": diary_id},
+            )
+        ]
+        node_key_map = await self.graph_store.upsert_nodes(diary_nodes)
+        diary_node_id = node_key_map.get(diary_node_key, 0)
+
         if not all_entities:
             return
 
-        # 2. 创建 entity 节点
-        nodes = [
-            GraphNode(
-                node_type="entity",
-                value=name,
-                canonical_value=self._canonicalize(name),
-                metadata={"diary_refs": 1},
-            )
-            for name in all_entities
-        ]
-        node_key_map = await self.graph_store.upsert_nodes(nodes)
-
-        # 3. 创建日记 → 实体 的边
+        # 2. 创建实体节点（检测 user 类型）
+        from ..storage.atom_store import AtomStore
+        nodes = []
         for name in all_entities:
             cv = self._canonicalize(name)
-            src_key = f"entity:{cv}"
-            src_id = node_key_map.get(src_key)
-            if not src_id:
-                continue
-            await self.graph_store.add_edge_by_ids(
-                edge_key=f"diary:{diary_id}:mentions:{cv}",
-                source_node_id=src_id,
-                target_node_id=0,  # diary node (optional)
-                relation_type="mentions",
-                source_memory_id=diary_id,
-                weight=1.0,
-            )
+            # 检测是否已知用户
+            ntype = "entity"
+            try:
+                if hasattr(self, 'atom_store') and self.atom_store:
+                    row = await self.atom_store.fetchone(
+                        "SELECT uid FROM user_identities WHERE display_name = ? LIMIT 1",
+                        (name,),
+                    )
+                    if row:
+                        ntype = "user"
+            except Exception:
+                pass
+            nodes.append(GraphNode(
+                node_type=ntype,
+                value=name,
+                canonical_value=cv,
+                metadata={"diary_refs": 1},
+            ))
+
+        node_key_map.update(await self.graph_store.upsert_nodes(nodes))
+
+        # 3. 创建 mentions 边 (entity → diary)，target 指向真实 diary 节点
+        entity_ids = []
+        for name in all_entities:
+            cv = self._canonicalize(name)
+            for prefix in ("entity:", "user:"):
+                src_key = f"{prefix}{cv}"
+                src_id = node_key_map.get(src_key)
+                if src_id:
+                    await self.graph_store.add_edge_by_ids(
+                        edge_key=f"diary:{diary_id}:mentions:{cv}",
+                        source_node_id=src_id,
+                        target_node_id=diary_node_id,  # 指向真实日记节点 ✅
+                        relation_type="mentions",
+                        source_memory_id=diary_id,
+                        weight=1.0,
+                    )
+                    entity_ids.append(src_id)
+                    break
+
+        # 4. 更新 co_occur 计数
+        if entity_ids:
+            await self.graph_store.update_cooccur(entity_ids)
 
     async def reindex_all(self, user_id: str | None = None):
         """重建全部图谱"""

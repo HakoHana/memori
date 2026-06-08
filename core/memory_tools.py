@@ -1,6 +1,5 @@
 """Agent 记忆工具 — 让 LLM 可以主动搜索和写入记忆"""
 
-from __future__ import annotations
 
 import json
 from typing import Any

@@ -38,15 +38,43 @@ class MemoryCore:
     所有对外 API 都从这里走。
     """
 
-    def __init__(self, plugin_context, data_dir: str, config: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        plugin_context=None,
+        llm_provider: LLMProvider | None = None,
+        context_provider: ContextProvider | None = None,
+        atom_store: AtomStore | None = None,
+        diary_store: DiaryStore | None = None,
+        persona_store: PersonaStore | None = None,
+        state_store: StateStore | None = None,
+        graph_store: GraphStore | None = None,
+        conversation_store: ConversationStore | None = None,
+        write_op_log: WriteOpLog | None = None,
+        data_dir: str | None = None,
+    ):
         self.plugin_context = plugin_context
-        self.data_dir = Path(data_dir)
         self.config = config or {}
         self._initialized = False
 
-        # 子模块（在 initialize 中创建）
-        self.llm_provider: AstrBotLLMProvider | None = None
-        self.context_provider: AstrBotContextProvider | None = None
+        # 外部注入的依赖（优先使用）
+        self._injected = {
+            "llm_provider": llm_provider,
+            "context_provider": context_provider,
+            "atom_store": atom_store,
+            "diary_store": diary_store,
+            "persona_store": persona_store,
+            "state_store": state_store,
+            "graph_store": graph_store,
+            "conversation_store": conversation_store,
+            "write_op_log": write_op_log,
+        }
+
+        self.data_dir = Path(data_dir) if data_dir else Path(".")
+
+        # 子模块（在 initialize 中创建或从注入获取）
+        self.llm_provider: LLMProvider | None = None
+        self.context_provider: ContextProvider | None = None
         self.atom_store: AtomStore | None = None
         self.diary_store: DiaryStore | None = None
         self.persona_store: PersonaStore | None = None
@@ -64,7 +92,10 @@ class MemoryCore:
         self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
-        """初始化所有模块"""
+        """初始化所有模块
+
+        优先使用注入的依赖，未注入时创建 AstrBot 默认实现。
+        """
         if self._initialized:
             return
 
@@ -72,10 +103,11 @@ class MemoryCore:
 
         prompts_dir = str(Path(__file__).parent.parent / "prompts")
         db_path = str(self.data_dir / "memory.db")
+        inj = self._injected
 
-        # 1. 抽象层
-        self.llm_provider = AstrBotLLMProvider(self.plugin_context)
-        self.context_provider = AstrBotContextProvider()
+        # 1. 抽象层（注入优先 → AstrBot 默认兜底）
+        self.llm_provider = inj["llm_provider"] or AstrBotLLMProvider(self.plugin_context)
+        self.context_provider = inj["context_provider"] or AstrBotContextProvider()
 
         # 2. 数据库迁移（失败不阻塞启动）
         try:
@@ -86,14 +118,14 @@ class MemoryCore:
         except Exception as e:
             logger.warning(f"[Memory] 数据库迁移失败（不影响启动）: {e}")
 
-        # 3. 存储层（统一 db_path，共享连接池）
-        self.atom_store = AtomStore(db_path)
-        self.diary_store = DiaryStore(db_path)
-        self.persona_store = PersonaStore(str(self.data_dir))
-        self.state_store = StateStore(db_path)
-        self.graph_store = GraphStore(db_path)
-        self.conversation_store = ConversationStore(db_path)
-        self.write_op_log = WriteOpLog(db_path)
+        # 3. 存储层（注入优先 → 新建兜底）
+        self.atom_store = inj["atom_store"] or AtomStore(db_path)
+        self.diary_store = inj["diary_store"] or DiaryStore(db_path)
+        self.persona_store = inj["persona_store"] or PersonaStore(str(self.data_dir))
+        self.state_store = inj["state_store"] or StateStore(db_path)
+        self.graph_store = inj["graph_store"] or GraphStore(db_path)
+        self.conversation_store = inj["conversation_store"] or ConversationStore(db_path)
+        self.write_op_log = inj["write_op_log"] or WriteOpLog(db_path)
 
         # 并行初始化存储层（都是 I/O 密集，可并发）
         init_tasks = [

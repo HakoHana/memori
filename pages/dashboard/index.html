@@ -24,6 +24,14 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span data-i18n="nav.recall">召回测试</span>
           </button>
+          <button class="nav-item" data-page="users">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span data-i18n="nav.persons">用户画像</span>
+          </button>
+          <button class="nav-item" data-page="archive">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+            <span>归档</span>
+          </button>
           <button class="nav-item" data-page="system">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
             <span data-i18n="nav.system">系统概览</span>
@@ -155,6 +163,48 @@
               <span id="recall-count-text">0 条结果</span>
             </div>
             <div id="recall-results"></div>
+          </div>
+        </section>
+        <!-- Page: Users -->
+        <section class="page" id="page-users">
+          <header class="page-header">
+            <span class="page-title" data-i18n="nav.persons">用户画像</span>
+            <div class="page-actions">
+              <input type="text" id="user-search" class="input input-sm" placeholder="" data-i18n-placeholder="persons.searchPh" />
+              <button class="btn btn-secondary btn-sm" id="user-refresh-btn">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>刷新</span>
+              </button>
+            </div>
+          </header>
+          <div class="page-body">
+            <div class="persona-stats" id="persona-stats">
+              <span id="persona-count"></span>
+            </div>
+            <div class="persona-grid" id="persona-grid">
+              <div class="persona-empty" data-i18n="persons.noUsers">暂未发现用户画像</div>
+            </div>
+          </div>
+        </section>
+        <!-- Page: Archive -->
+        <section class="page" id="page-archive">
+          <header class="page-header">
+            <span class="page-title">归档管理</span>
+            <div class="page-actions">
+              <button class="btn btn-secondary btn-sm" id="archive-refresh-btn">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>刷新</span>
+              </button>
+            </div>
+          </header>
+          <div class="page-body">
+            <div class="filter-bar">
+              <input type="text" id="archive-search" class="input" placeholder="搜索已归档内容..." style="max-width:300px" />
+              <span class="count-badge" id="archive-count">0 条</span>
+            </div>
+            <div class="archive-list" id="archive-list">
+              <div class="table-empty">暂无归档数据</div>
+            </div>
           </div>
         </section>
         <!-- Page: System -->

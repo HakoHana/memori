@@ -24,6 +24,11 @@
     _recallCache: null,
     _systemCache: null,
     pendingSearch: null,
+    personas: {
+      users: [],
+      keyword: "",
+    },
+    _personaDetailUid: null,
   };
 
   /* ================================================================
@@ -259,6 +264,8 @@
     });
     if (name === "graph") { fetchGraphStats(); if (window.ensureGraphScene) window.ensureGraphScene(); }
     if (name === "memory" || name === "memories") { fetchMemories(); }
+    if (name === "users") { fetchPersonas(); }
+    if (name === "archive") { fetchArchive(); }
     if (name === "system") { fetchSystemOverview(); }
   }
 
@@ -310,6 +317,9 @@
       updateMemoryPagination();
       updateBatchBar();
     }
+    if (state.page === "users" && state.personas.users.length) {
+      renderPersonaGrid();
+    }
     if (state._detailCache) {
       if (state.isEditing) renderMemoryEditView(state._detailCache);
       else renderMemoryDetailView(state._detailCache);
@@ -342,6 +352,7 @@
     state.isEditing = false;
     state._detailCache = null;
     state._nodeDetailCache = null;
+    state._personaDetailUid = null;
   }
 
   async function renderPeekMemory(memory) {
@@ -1376,6 +1387,8 @@
       initSidebar();
       initMemoryPage();
       initRecallPage();
+      initPersonaPage();
+      initArchivePage();
 
       var peekClose = document.getElementById("peek-close");
       if (peekClose) peekClose.addEventListener("click", closePeek);
@@ -1397,7 +1410,370 @@
     }
   }
 
-  /* Expose to graph-ui */
+  /* ================================================================
+     Persona / User Profile Page
+     ================================================================ */
+  async function fetchPersonas() {
+    var grid = document.getElementById("persona-grid");
+    if (!grid) return;
+    grid.innerHTML = '<div class="persona-empty">' + window.t("common.loading") + '</div>';
+
+    try {
+      var data = unwrapApiData(await apiRequest("users")) || {};
+      state.personas.users = Array.isArray(data) ? data : (data.users || []);
+      renderPersonaGrid();
+    } catch (e) {
+      grid.innerHTML = '<div class="persona-empty">' + window.t("persons.loadError") + '</div>';
+      showToast(e.message || window.t("persons.loadError"), true);
+    }
+  }
+
+  function renderPersonaGrid() {
+    var grid = document.getElementById("persona-grid");
+    if (!grid) return;
+
+    var users = state.personas.users;
+    var keyword = state.personas.keyword.trim().toLowerCase();
+
+    if (keyword) {
+      users = users.filter(function(u) {
+        return (u.uid || "").toLowerCase().includes(keyword)
+            || (u.name || "").toLowerCase().includes(keyword)
+            || (u.tags || []).some(function(t) { return t.toLowerCase().includes(keyword); })
+            || (u.summary || "").toLowerCase().includes(keyword);
+      });
+    }
+
+    var countEl = document.getElementById("persona-count");
+    if (countEl) {
+      if (!countEl) {} // skip — pages version may not have this element
+    }
+
+    if (!users.length) {
+      grid.innerHTML = '<div class="persona-empty">' + window.t(keyword ? "common.noData" : "persons.noUsers") + '</div>';
+      return;
+    }
+
+    var html = "";
+    users.forEach(function(u) {
+      var initial = (u.name || u.uid || "?").charAt(0).toUpperCase();
+      var tier = (u.tier || "new").toLowerCase();
+      var tags = u.tags || [];
+      var summary = u.summary || "";
+      var lastUpdate = u.last_update ? formatPersonaTime(u.last_update) : "--";
+      var tierLabels = { new: "New", known: "Known", trusted: "Trusted", core: "Core" };
+      var tierLabel = tierLabels[tier] || tier;
+      var conf = u.confidence != null ? Number(u.confidence) : 0;
+      var confClass = conf >= 0.7 ? "high" : conf >= 0.4 ? "medium" : "low";
+
+      html += '<div class="persona-card" data-uid="' + esc(u.uid) + '">';
+      html += '<div class="persona-card-top">';
+      html += '<div class="persona-card-avatar">' + esc(initial) + '</div>';
+      html += '<div class="persona-card-info">';
+      html += '<div class="persona-card-name">' + esc(u.name || u.uid) + '</div>';
+      html += '<div class="persona-card-uid">' + esc(u.uid) + '</div>';
+      html += '</div>';
+      html += '<div class="persona-card-tier ' + esc(tier) + '">' + esc(tierLabel) + '</div>';
+      html += '</div>';
+
+      if (summary) {
+        html += '<div class="persona-card-summary">' + esc(summary) + '</div>';
+      }
+
+      if (tags.length) {
+        html += '<div class="persona-card-tags">';
+        tags.forEach(function(t) {
+          html += '<span class="persona-card-tag">' + esc(t) + '</span>';
+        });
+        html += '</div>';
+      }
+
+      html += '<div class="persona-card-meta">';
+      html += '<span class="persona-card-meta-item">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+      html += esc(lastUpdate);
+      html += '</span>';
+      html += '<span class="persona-confidence">';
+      html += '<span class="persona-confidence-dot ' + confClass + '"></span>';
+      html += (conf * 100).toFixed(0) + '%';
+      html += '</span>';
+      html += '<span style="margin-left:auto">' + (u.identity_count || 0) + ' ' + window.t("persons.identities") + '</span>';
+      html += '</div>';
+
+      html += '</div>';
+    });
+
+    grid.innerHTML = html;
+
+    grid.querySelectorAll(".persona-card").forEach(function(card) {
+      card.addEventListener("click", function() {
+        var uid = card.dataset.uid;
+        if (uid) openPersonaDetail(uid);
+      });
+    });
+  }
+
+  function formatPersonaTime(ts) {
+    if (!ts) return "--";
+    var d = new Date(Number(ts) * 1000);
+    if (isNaN(d.getTime())) return String(ts).slice(0, 10);
+    var now = Date.now();
+    var diff = now - d.getTime();
+    if (diff < 60000) return window.t("misc.justNow") || "刚刚";
+    if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
+    if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
+    return d.toLocaleDateString();
+  }
+
+  async function openPersonaDetail(uid) {
+    if (!uid) return;
+    state._personaDetailUid = uid;
+
+    var panel = document.getElementById("peek-panel");
+    panel.classList.add("visible", "wide");
+    document.getElementById("peek-overlay").classList.add("visible");
+    document.getElementById("peek-badge").innerHTML = "";
+    document.getElementById("peek-title").textContent = window.t("persons.detailTitle");
+    document.getElementById("peek-body").innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary)">' + window.t("common.loading") + '</div>';
+
+    try {
+      var data = unwrapApiData(await apiRequest("users/detail?uid=" + encodeURIComponent(uid)));
+      renderPersonaDetail(data);
+    } catch (e) {
+      document.getElementById("peek-body").innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger)">' + esc(e.message || window.t("misc.requestFailed")) + '</div>';
+    }
+  }
+
+  function renderPersonaDetail(data) {
+    if (!data) return;
+    var uid = data.uid || "";
+    var name = data.name || uid;
+    var initial = name.charAt(0).toUpperCase();
+    var tags = data.tags || [];
+    var summary = data.summary || "";
+    var fullMarkdown = data.full_markdown || "";
+    var tier = (data.tier || "new").toLowerCase();
+    var tierLabels = { new: "New", known: "Known", trusted: "Trusted", core: "Core" };
+    var identities = data.identities || [];
+    var atoms = data.recent_atoms || [];
+    var lastUpdate = data.last_update ? formatPersonaTime(data.last_update) : "--";
+
+    document.getElementById("peek-title").textContent = name;
+
+    var html = "";
+
+    html += '<div class="persona-detail-header">';
+    html += '<div class="persona-detail-avatar">' + esc(initial) + '</div>';
+    html += '<div class="persona-detail-info">';
+    html += '<div class="persona-detail-name">' + esc(name) + '</div>';
+    html += '<div class="persona-detail-uid">' + esc(uid) + '</div>';
+    html += '</div>';
+    html += '<div class="persona-card-tier ' + esc(tier) + '" style="margin-top:0">' + esc(tierLabels[tier] || tier) + '</div>';
+    html += '</div>';
+
+    if (tags.length) {
+      html += '<div class="persona-detail-section">';
+      html += '<div class="persona-detail-section-title">' + window.t("detail.topics") + '</div>';
+      html += '<div class="persona-detail-tags">';
+      tags.forEach(function(t) {
+        html += '<span class="persona-detail-tag">' + esc(t) + '</span>';
+      });
+      html += '</div></div>';
+    }
+
+    if (summary) {
+      html += '<div class="persona-detail-section">';
+      html += '<div class="persona-detail-section-title">' + window.t("detail.content") + '</div>';
+      html += '<div class="persona-detail-summary">' + renderWikilinks(summary || fullMarkdown) + '</div>';
+      html += '</div>';
+    }
+
+    html += '<div class="persona-detail-section">';
+    html += '<div class="persona-detail-section-title">' + window.t("detail.metadata") + '</div>';
+    html += '<div class="persona-detail-meta-grid">';
+    html += '<div class="persona-detail-meta-item">';
+    html += '<div class="persona-detail-meta-label">' + window.t("persons.tier") + '</div>';
+    html += '<div class="persona-detail-meta-value">' + esc(tierLabels[tier] || tier) + '</div></div>';
+    html += '<div class="persona-detail-meta-item">';
+    html += '<div class="persona-detail-meta-label">' + window.t("persons.version") + '</div>';
+    html += '<div class="persona-detail-meta-value">v' + (data.version || 0) + '</div></div>';
+    html += '<div class="persona-detail-meta-item">';
+    html += '<div class="persona-detail-meta-label">' + window.t("persons.confidence") + '</div>';
+    html += '<div class="persona-detail-meta-value">' + (data.confidence != null ? (Number(data.confidence) * 100).toFixed(0) + "%" : "--") + '</div></div>';
+    html += '<div class="persona-detail-meta-item">';
+    html += '<div class="persona-detail-meta-label">' + window.t("persons.lastUpdate") + '</div>';
+    html += '<div class="persona-detail-meta-value">' + esc(lastUpdate) + '</div></div>';
+    if (data.diary_count_since_full != null) {
+      html += '<div class="persona-detail-meta-item">';
+      html += '<div class="persona-detail-meta-label">' + window.t("persons.diaryCount") + '</div>';
+      html += '<div class="persona-detail-meta-value">' + data.diary_count_since_full + '</div></div>';
+    }
+    if (data.incremental_count != null) {
+      html += '<div class="persona-detail-meta-item">';
+      html += '<div class="persona-detail-meta-label">' + window.t("persons.incCount") + '</div>';
+      html += '<div class="persona-detail-meta-value">' + data.incremental_count + '</div></div>';
+    }
+    html += '</div></div>';
+
+    if (identities.length) {
+      html += '<div class="persona-detail-section">';
+      html += '<div class="persona-detail-section-title">' + window.t("persons.identities") + ' (' + identities.length + ')</div>';
+      identities.forEach(function(id) {
+        html += '<div class="persona-detail-identity">';
+        html += '<div class="persona-detail-identity-left">';
+        html += '<div class="persona-detail-identity-platform">' + esc(id.platform || "") + '</div>';
+        html += '<div class="persona-detail-identity-name">' + esc(id.name || "") + '</div>';
+        html += '</div>';
+        html += '<div class="persona-detail-identity-since">' + (id.since || id.first_seen || "") + (id.verified ? ' ✓' : '') + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="persona-detail-section">';
+    html += '<div class="persona-detail-section-title">' + window.t("persons.recentAtoms") + ' (' + atoms.length + ')</div>';
+    if (atoms.length) {
+      html += '<div class="persona-detail-atom-list">';
+      atoms.forEach(function(a) {
+        html += '<div class="persona-detail-atom-item" data-date="' + esc(a.date || "") + '" data-type="' + esc(a.type || "") + '">';
+        html += '<div class="persona-detail-atom-content">' + esc(a.content || "") + '</div>';
+        html += '<div class="persona-detail-atom-meta">';
+        html += '<span class="type-tag">' + esc(a.type || "") + '</span>';
+        html += '<span>' + window.t("detail.importance") + ': ' + (a.importance != null ? Number(a.importance).toFixed(2) : "--") + '</span>';
+        if (a.date) html += '<span>' + esc(a.date) + '</span>';
+        html += '</div></div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div style="text-align:center;padding:var(--space-6);color:var(--text-tertiary);font-size:13px">' + window.t("persons.noAtoms") + '</div>';
+    }
+    html += '</div>';
+
+    document.getElementById("peek-body").innerHTML = html;
+
+    document.querySelectorAll(".persona-detail-atom-item").forEach(function(item) {
+      item.addEventListener("click", function() {
+        var date = item.dataset.date;
+        if (date) {
+          var memInput = document.getElementById("mem-keyword");
+          if (memInput) memInput.value = date;
+          switchPage("memories");
+        }
+      });
+    });
+  }
+
+  function initPersonaPage() {
+    var searchInput = document.getElementById("user-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", debounce(function() {
+        state.personas.keyword = this.value;
+        renderPersonaGrid();
+      }, 300));
+    }
+    var refreshBtn = document.getElementById("user-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function() {
+        state.personas.keyword = "";
+        var si = document.getElementById("user-search");
+        if (si) si.value = "";
+        fetchPersonas();
+      });
+    }
+  }
+
+  /* ================================================================
+     Archive Page
+     ================================================================ */
+  async function fetchArchive() {
+    var list = document.getElementById("archive-list");
+    if (!list) return;
+    list.innerHTML = '<div class="table-empty">' + window.t("common.loading") + '</div>';
+
+    try {
+      var keyword = (document.getElementById("archive-search") || {}).value || "";
+      var params = new URLSearchParams();
+      params.set("page", "1");
+      params.set("page_size", "50");
+      if (keyword) params.set("keyword", keyword);
+      var data = unwrapApiData(await apiRequest("archive/list?" + params.toString())) || {};
+      renderArchiveList(data);
+    } catch (e) {
+      list.innerHTML = '<div class="table-empty">' + window.t("misc.requestFailed") + '</div>';
+    }
+  }
+
+  function renderArchiveList(data) {
+    var list = document.getElementById("archive-list");
+    if (!list) return;
+    var items = data.items || [];
+    var total = data.total || 0;
+
+    var countEl = document.getElementById("archive-count");
+    if (countEl) countEl.textContent = total + " 条";
+
+    if (!items.length) {
+      list.innerHTML = '<div class="table-empty">' + window.t("common.noData") + '</div>';
+      return;
+    }
+
+    var html = '<div class="archive-items">';
+    items.forEach(function(item) {
+      html += '<div class="archive-item" data-id="' + item.id + '">';
+      html += '<div class="archive-item-header">';
+      html += '<span class="archive-item-date">' + esc(item.date || "") + '</span>';
+      html += '<span class="archive-item-user">' + esc(item.user_id || "") + '</span>';
+      html += '<span class="archive-item-importance">' + (item.importance != null ? Number(item.importance).toFixed(1) : "") + '</span>';
+      html += '</div>';
+      html += '<div class="archive-item-content">' + esc(item.content || "") + '</div>';
+      html += '<div class="archive-item-actions">';
+      html += '<button class="btn btn-sm btn-ghost archive-restore-btn" data-id="' + item.id + '">' + window.t("common.refresh") + '</button>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+    list.innerHTML = html;
+
+    list.querySelectorAll(".archive-restore-btn").forEach(function(btn) {
+      btn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var id = parseInt(btn.dataset.id);
+        if (id) restoreArchiveItem(id);
+      });
+    });
+  }
+
+  async function restoreArchiveItem(id) {
+    if (!id) return;
+    try {
+      var result = unwrapApiData(await apiRequest("archive/restore", {
+        method: "POST",
+        body: { id: id },
+      }));
+      if (result && result.restored) {
+        showToast(window.t("archive.success", 1));
+        fetchArchive();
+      }
+    } catch (e) {
+      showToast(e.message || window.t("archive.fail"), true);
+    }
+  }
+
+  function initArchivePage() {
+    var searchInput = document.getElementById("archive-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", debounce(function() {
+        fetchArchive();
+      }, 300));
+    }
+    var refreshBtn = document.getElementById("archive-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", fetchArchive);
+    }
+  }
+
+  /* ================================================================
+     Expose to graph-ui
+     ================================================================ */
   window.lmState = state;
   window.lmShowToast = showToast;
   window.lmApiRequest = apiRequest;

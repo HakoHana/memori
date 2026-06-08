@@ -36,6 +36,7 @@ class PageApi:
         register(f"{prefix}/memories/delete", self.delete_memory, ["POST"], "Delete memory")
         register(f"{prefix}/memories/batch-delete", self.batch_delete_memories, ["POST"], "Batch delete memories")
         register(f"{prefix}/memories/update-status", self.update_diary_status, ["POST"], "Update diary status")
+        register(f"{prefix}/memories/batch-update", self.update_diary_status, ["POST"], "Batch update diary (alias)")
         register(f"{prefix}/memories/timeline", self.get_timeline, ["GET"], "Memory timeline")
         register(f"{prefix}/memories/day", self.get_day_detail, ["GET"], "Memory day detail")
         register(f"{prefix}/diary", self.get_diary, ["GET"], "Get diary content")
@@ -44,6 +45,10 @@ class PageApi:
         register(f"{prefix}/persona/update", self.update_persona, ["POST"], "Update persona")
         register(f"{prefix}/import/livingmemory", self.import_livingmemory, ["POST"], "Import from livingmemory")
         register(f"{prefix}/providers", self.list_providers, ["GET"], "List LLM providers")
+        register(f"{prefix}/users", self.list_users, ["GET"], "List users")
+        register(f"{prefix}/users/detail", self.get_user_detail, ["GET"], "User detail with memories")
+        register(f"{prefix}/archive/list", self.list_archived, ["GET"], "List archived entries")
+        register(f"{prefix}/archive/restore", self.restore_archived, ["POST"], "Restore from archive")
 
     # ── 复用 Store 的异步连接池 ──
 
@@ -55,6 +60,10 @@ class PageApi:
     async def _fetch(self, sql: str, params: tuple | list | None = None) -> list:
         """通过共享连接池执行异步查询"""
         return await self._db.fetch(sql, params)
+
+    async def _fetchone(self, sql: str, params: tuple | list | None = None):
+        """取单行"""
+        return await self._db.fetchone(sql, params)
 
     async def _execute(self, sql: str, params: tuple | list | None = None):
         """通过共享连接池执行异步写入"""
@@ -235,17 +244,40 @@ class PageApi:
             return self._error(str(e))
 
     async def update_memory(self):
-        """更新记忆"""
+        """更新日记条目
+
+        兼容两种入参格式：
+        - 前端格式：{ memory_id, field: "content"|"status"|"importance", value }
+        - 旧格式：{ id, content/importance/status 直接字段 }
+        """
         try:
             from quart import request
-            body = await request.get_json()
-            atom_id = body.get("id", 0)
+            body = await request.get_json() or {}
+            entry_id = body.get("memory_id") or body.get("id") or 0
             updates = {}
-            for field in ("content", "atom_type", "importance"):
-                if field in body:
-                    updates[field] = body[field]
-            ok = await self.core.atom_store.update_atom(atom_id, **updates)
-            return self._ok({"updated": ok})
+
+            # 旧格式兼容：直接字段模式
+            for f in ("content", "importance", "status"):
+                if f in body:
+                    updates[f] = body[f]
+
+            # 前端格式：field + value 模式
+            field = body.get("field", "")
+            if field and "value" in body:
+                field_map = {"content": "content", "importance": "importance", "status": "status"}
+                db_field = field_map.get(field)
+                if db_field:
+                    updates[db_field] = body["value"]
+
+            if updates:
+                updates["updated_at"] = time.time()
+                sets = ", ".join(f"{k}=?" for k in updates)
+                vals = list(updates.values()) + [entry_id]
+                await self._execute(
+                    f"UPDATE diary_entries SET {sets} WHERE id=?", vals
+                )
+
+            return self._ok({"updated": True, "new_memory_id": entry_id})
         except Exception as e:
             return self._error(str(e))
 
@@ -293,10 +325,29 @@ class PageApi:
             return self._error(str(e))
 
     async def update_diary_status(self):
-        """更新日记状态"""
+        """更新日记状态（单条 + 批量双模式）
+
+        单条：{ id, status }
+        批量：{ memory_ids: [...], field: "status", value: "archived" }
+        """
         try:
             from quart import request
-            body = await request.get_json()
+            body = await request.get_json() or {}
+
+            # 批量模式 — 前端 batch-update 调用
+            memory_ids = body.get("memory_ids") or []
+            if memory_ids:
+                field = body.get("field", "status")
+                value = body.get("value", "active")
+                now = time.time()
+                for eid in memory_ids:
+                    await self._execute(
+                        f"UPDATE diary_entries SET {field}=?, updated_at=? WHERE id=?",
+                        (value, now, eid),
+                    )
+                return self._ok({"updated": len(memory_ids)})
+
+            # 单条模式
             diary_id = body.get("id", 0)
             status_val = body.get("status", "active")
             await self._execute(
@@ -477,6 +528,150 @@ class PageApi:
                 capture_output=True, text=True, timeout=120,
             )
             return self._ok({"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode})
+        except Exception as e:
+            return self._error(str(e))
+
+    # ═══════════════════════════════════════════════════
+    #  用户管理
+    # ═══════════════════════════════════════════════════
+
+    async def list_users(self):
+        """列出所有规范用户及画像"""
+        try:
+            rows = await self._db.fetch("""
+                SELECT cu.uid, cu.primary_name, cu.identity_confidence,
+                       up.summary, up.tags, up.tier, up.version,
+                       up.last_incremental_update, up.last_full_update,
+                       (SELECT COUNT(*) FROM user_identities ui WHERE ui.uid=cu.uid) as id_count
+                FROM canonical_users cu
+                LEFT JOIN user_persona up ON cu.uid = up.uid
+                ORDER BY up.last_incremental_update DESC NULLS LAST
+            """)
+            import json
+            users = []
+            for r in rows:
+                tags = []
+                try:
+                    tags = json.loads(r[4]) if r[4] else []
+                except Exception:
+                    pass
+                users.append({
+                    "uid": r[0], "name": r[1] or r[0], "confidence": r[2],
+                    "summary": (r[3] or "")[:300], "tags": tags,
+                    "tier": r[5] or "new", "version": r[6] or 0,
+                    "last_update": r[7] or r[8] or 0,
+                    "identity_count": r[9] or 0,
+                })
+            return self._ok(users)
+        except Exception as e:
+            return self._error(str(e))
+
+    async def get_user_detail(self):
+        """获取用户详情（画像 + 关联记忆）"""
+        try:
+            from quart import request
+            uid = request.args.get("uid", "")
+            if not uid:
+                return self._error("uid required")
+            row = await self._db.fetchone("""
+                SELECT cu.uid, cu.primary_name, cu.identity_confidence,
+                       up.summary, up.full_markdown, up.tags, up.tier,
+                       up.version, up.last_incremental_update, up.last_full_update,
+                       up.diary_count_since_full, up.incremental_count
+                FROM canonical_users cu
+                LEFT JOIN user_persona up ON cu.uid = up.uid
+                WHERE cu.uid=?
+            """, (uid,))
+            if not row:
+                return self._error("未找到用户")
+            import json
+            tags = []
+            try:
+                tags = json.loads(row[5]) if row[5] else []
+            except Exception:
+                pass
+            # 获取关联身份
+            identities = await self._db.fetch(
+                "SELECT platform, display_name, first_seen, verified FROM user_identities WHERE uid=?",
+                (uid,),
+            )
+            # 获取最近的原子
+            user_id_like = f"%{uid}%"
+            atoms = await self._db.fetch("""
+                SELECT content, atom_type, importance, diary_date
+                FROM memory_atoms WHERE user_id LIKE ? AND status='active'
+                ORDER BY created_at DESC LIMIT 20
+            """, (user_id_like,))
+            return self._ok({
+                "uid": row[0], "name": row[1], "confidence": row[2],
+                "summary": row[3] or "", "full_markdown": row[4] or "",
+                "tags": tags, "tier": row[6] or "new",
+                "version": row[7] or 0, "last_update": row[8] or row[9] or 0,
+                "diary_count_since_full": row[10] or 0, "incremental_count": row[11] or 0,
+                "identities": [{"platform": r[0], "name": r[1], "since": r[2], "verified": r[3]} for r in identities] if identities else [],
+                "recent_atoms": [{"content": r[0], "type": r[1], "importance": r[2], "date": r[3]} for r in atoms] if atoms else [],
+            })
+        except Exception as e:
+            return self._error(str(e))
+
+    # ═══════════════════════════════════════════════════
+    #  归档管理
+    # ═══════════════════════════════════════════════════
+
+    async def list_archived(self):
+        """列出已归档日记"""
+        try:
+            from quart import request
+            q = request.args
+            keyword = q.get("keyword", "").strip()
+            page = max(1, int(q.get("page", 1)))
+            page_size = min(100, max(1, int(q.get("page_size", 20))))
+
+            conditions = ["archived = 1"]
+            params: list = []
+            if keyword:
+                conditions.append("content LIKE ?")
+                params.append(f"%{keyword}%")
+
+            where = " AND ".join(conditions)
+            rows = await self._fetch(f"""
+                SELECT id, user_id, date, content, importance, created_at
+                FROM diary_entries WHERE {where}
+                ORDER BY created_at DESC LIMIT ? OFFSET ?
+            """, params + [page_size, (page - 1) * page_size])
+            total = (await self._fetchone(
+                f"SELECT COUNT(*) FROM diary_entries WHERE {where}", params
+            ))[0]
+
+            items = []
+            for r in rows:
+                items.append({
+                    "id": r[0], "user_id": r[1], "date": r[2],
+                    "content": (r[3] or "")[:200],
+                    "importance": r[4], "created_at": r[5],
+                })
+            return self._ok({"total": total, "items": items, "page": page})
+        except Exception as e:
+            return self._error(str(e))
+
+    async def restore_archived(self):
+        """从归档恢复日记"""
+        try:
+            from quart import request
+            body = await request.get_json()
+            diary_id = body.get("id", 0)
+            if not diary_id:
+                return self._error("id required")
+            if not hasattr(self.core, 'archiver') or not self.core.archiver:
+                return self._error("归档模块不可用")
+            restored = await self.core.archiver.restore_from_archive(diary_id)
+            if restored:
+                await self._execute(
+                    "UPDATE diary_entries SET content=?, archived=0, updated_at=? WHERE id=?",
+                    (restored, time.time(), diary_id),
+                )
+                return self._ok({"restored": True, "content": restored[:200]})
+            return self._error("未找到归档内容")
         except Exception as e:
             return self._error(str(e))
 

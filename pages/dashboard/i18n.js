@@ -37,6 +37,7 @@
     "nav.memory":         { zh: "记忆管理", en: "Memory", ru: "Память" },
     "nav.graph":          { zh: "知识图谱", en: "Knowledge Graph", ru: "Граф знаний" },
     "nav.recallTest":     { zh: "召回测试", en: "Recall Test", ru: "Тест поиска" },
+    "nav.persons":        { zh: "用户画像", en: "Personas", ru: "Профили" },
     "nav.system":         { zh: "系统概览", en: "System", ru: "Система" },
     "nav.recall":         { zh: "召回测试", en: "Recall Test", ru: "Тест поиска" },
 
@@ -323,7 +324,24 @@
 
     /* ---- Recall Results Metadata ---- */
     "recall.resultId":    { zh: "记忆 ID:", en: "Memory ID:", ru: "ID памяти:" },
+ 
+    /* ---- Persons ---- */
+    "persons.searchPh":   { zh: "搜索用户名、UID 或标签...", en: "Search name, UID or tags...", ru: "Поиск имени, ID или тегов..." },
+    "persons.count":      { zh: "共 {0} 个用户", en: "{0} users total", ru: "Всего {0} пользователей" },
+    "persons.noUsers":    { zh: "暂未发现用户画像", en: "No user personas found", ru: "Профили не найдены" },
+    "persons.loadError":  { zh: "加载用户列表失败", en: "Failed to load users", ru: "Ошибка загрузки пользователей" },
+    "persons.detailTitle":{ zh: "用户详情", en: "User Detail", ru: "Детали пользователя" },
+    "persons.identities": { zh: "身份信息", en: "Identities", ru: "Идентификаторы" },
+    "persons.recentAtoms":{ zh: "最近记忆原子", en: "Recent Memory Atoms", ru: "Недавние атомы" },
+    "persons.noAtoms":    { zh: "暂无记忆原子", en: "No memory atoms", ru: "Нет атомов" },
+    "persons.tier":       { zh: "等级", en: "Tier", ru: "Уровень" },
+    "persons.version":    { zh: "版本", en: "Version", ru: "Версия" },
+    "persons.lastUpdate": { zh: "最近更新", en: "Last Update", ru: "Обновление" },
+    "persons.confidence": { zh: "可信度", en: "Confidence", ru: "Доверие" },
+    "persons.diaryCount": { zh: "全量后日记数", en: "Diaries since full", ru: "Дневников с полной" },
+    "persons.incCount":   { zh: "增量更新次数", en: "Incremental updates", ru: "Инкремент. обновлений" },
     "recall.resultScore": { zh: "相似度得分:", en: "Similarity Score:", ru: "Оценка схожести:" },
+    "misc.justNow":      { zh: "刚刚", en: "Just now", ru: "Только что" },
     "recall.resultSession":{ zh: "会话 UUID:", en: "Session UUID:", ru: "UUID сессии:" },
     "recall.resultImportance":{ zh: "重要性:", en: "Importance:", ru: "Важность:" },
     "recall.resultType":  { zh: "类型:", en: "Type:", ru: "Тип:" },

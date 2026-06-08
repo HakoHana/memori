@@ -2018,3 +2018,413 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ═══ 用户画像卡片 ═══ */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-4);
+}
+
+.persona-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.persona-card:hover {
+  border-color: var(--border-normal);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.persona-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.persona-card-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.persona-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.persona-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.persona-card-uid {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  margin-top: 1px;
+}
+
+.persona-card-tier {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.persona-card-tier.new    { background: var(--success-light); color: var(--success); }
+.persona-card-tier.known  { background: var(--accent-light); color: var(--accent); }
+.persona-card-tier.trusted{ background: #fff4e6; color: #d9480f; }
+.persona-card-tier.core   { background: #f3e8ff; color: #7c3aed; }
+
+.persona-card-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.persona-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.persona-card-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  transition: background var(--transition-fast);
+}
+
+.persona-card-tag:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.persona-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-light);
+  margin-top: auto;
+}
+
+.persona-card-meta-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.persona-card-meta-item svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.6;
+}
+
+.persona-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.persona-confidence-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.persona-confidence-dot.high   { background: var(--success); }
+.persona-confidence-dot.medium { background: var(--warning); }
+.persona-confidence-dot.low    { background: var(--text-tertiary); }
+
+.persona-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: var(--space-12) var(--space-6);
+  color: var(--text-tertiary);
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+}
+
+/* ═══ 用户画像详情（Peek 面板） ═══ */
+.persona-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.persona-detail-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.persona-detail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.persona-detail-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.persona-detail-uid {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  margin-top: 2px;
+}
+
+.persona-detail-section {
+  margin-bottom: var(--space-5);
+}
+
+.persona-detail-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-3);
+}
+
+.persona-detail-summary {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.persona-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.persona-detail-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.persona-detail-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.persona-detail-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.persona-detail-meta-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.persona-detail-meta-value {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.persona-detail-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-2);
+}
+
+.persona-detail-identity:last-child {
+  margin-bottom: 0;
+}
+
+.persona-detail-identity-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.persona-detail-identity-platform {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.persona-detail-identity-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.persona-detail-identity-since {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.persona-detail-atom-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.persona-detail-atom-item {
+  font-size: 13px;
+  color: var(--text-primary);
+  padding: var(--space-3);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+
+.persona-detail-atom-item:hover {
+  background: color-mix(in srgb, var(--accent-light) 45%, var(--bg-card));
+}
+
+.persona-detail-atom-content {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: var(--space-1);
+}
+
+.persona-detail-atom-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 768px) {
+  .persona-grid {
+    grid-template-columns: 1fr;
+  }
+  .persona-detail-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ═══ 归档列表 ═══ */
+.archive-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.archive-item:hover {
+  border-color: var(--border-normal);
+}
+
+.archive-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.archive-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-item-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.archive-item-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.archive-empty {
+  text-align: center;
+  padding: var(--space-10);
+  color: var(--text-tertiary);
+}

@@ -28,32 +28,24 @@ def _json_result(data: dict) -> str:
 class RecallMemoryTool(FunctionTool):
     """主动搜索记忆工具"""
 
-    name: str = "recall_long_term_memory"
-    description: str = (
-        "当对话需要参考长期记忆中的信息时，调用此工具搜索相关记忆。"
-        "使用简短的关键词，不要复制整个用户消息。"
-        "当用户问「你还记得吗」「之前说的」「帮我回忆」等时，优先调用此工具。"
-    )
-    parameters: dict = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "搜索关键词，简短的话题、实体名、偏好等",
+    def __init__(self):
+        super().__init__(
+            name="recall_long_term_memory",
+            description="当对话需要参考长期记忆中的信息时，调用此工具搜索相关记忆。"
+            "使用简短的关键词，不要复制整个用户消息。"
+            "当用户问「你还记得吗」「之前说的」「帮我回忆」等时，优先调用此工具。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词"},
+                    "k": {"type": "integer", "description": "返回结果数量", "default": 3},
+                },
+                "required": ["query"],
             },
-            "k": {
-                "type": "integer",
-                "description": "返回结果数量",
-                "default": 3,
-            },
-        },
-        "required": ["query"],
-    }
-    # 非 Pydantic 字段，由 setter 注入
-    _memory_core: Any = None
+        )
 
     def set_memory_core(self, mc):
-        """注入 MemoryCore 实例（绕过 Pydantic 字段校验）"""
+        """注入 MemoryCore 实例"""
         object.__setattr__(self, '_memory_core', mc)
 
     async def call(self, **kwargs) -> str:
@@ -82,28 +74,21 @@ class RecallMemoryTool(FunctionTool):
 class MemorizeMemoryTool(FunctionTool):
     """主动写入记忆工具"""
 
-    name: str = "memorize_long_term_memory"
-    description: str = (
-        "当用户明确要求你记住某些信息时（如「帮我记住」「别忘了」「请记住」），"
-        "调用此工具将信息写入长期记忆。"
-        "将信息整理为简洁的一句话或几个关键点。"
-    )
-    parameters: dict = {
-        "type": "object",
-        "properties": {
-            "content": {
-                "type": "string",
-                "description": "要记住的信息内容，简洁的一句话",
+    def __init__(self):
+        super().__init__(
+            name="memorize_long_term_memory",
+            description="当用户明确要求你记住某些信息时（如「帮我记住」「别忘了」「请记住」），"
+            "调用此工具将信息写入长期记忆。"
+            "将信息整理为简洁的一句话或几个关键点。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "要记住的信息内容"},
+                    "importance": {"type": "number", "description": "重要度（0~1）", "default": 0.7},
+                },
+                "required": ["content"],
             },
-            "importance": {
-                "type": "number",
-                "description": "重要度（0~1），默认为 0.7",
-                "default": 0.7,
-            },
-        },
-        "required": ["content"],
-    }
-    _memory_core: Any = None
+        )
 
     def set_memory_core(self, mc):
         """注入 MemoryCore 实例"""

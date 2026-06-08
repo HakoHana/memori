@@ -43,31 +43,56 @@ class Retriever:
         return imp / total, rank / total  # 归一化，确保加起来=1
 
     async def recall(self, user_id: str, query: str, k: int | None = None) -> list[MemoryAtom]:
-        """搜索相关记忆原子（FTS5 + LIKE 中文兜底）"""
+        """搜索相关记忆原子（去重 + 多样性排序）"""
         k = k or self.recall_count
         if not query or not query.strip():
             return []
 
         imp_w, rank_w = self._search_weights()
-        atoms = await self.atom_store.search_fts(query, user_id, k, imp_w, rank_w)
+        top_k = k * 3  # 多取候选，再按多样性截断
+        atoms = await self.atom_store.search_fts(query, user_id, top_k, imp_w, rank_w)
 
-        # FTS5 对中文支持有限，不足 k 条时用 LIKE 补充
-        if len(atoms) < k:
+        # FTS5 对中文支持有限，不足时用 LIKE 补充候选
+        if len(atoms) < top_k:
             try:
                 rows = await self.atom_store.fetch("""
                     SELECT * FROM memory_atoms
                     WHERE user_id=? AND status='active' AND content LIKE ?
                     ORDER BY importance DESC LIMIT ?
-                """, (user_id, f"%{query}%", k - len(atoms)))
+                """, (user_id, f"%{query}%", top_k - len(atoms)))
                 seen_ids = {a.atom_id for a in atoms}
                 for r in rows:
                     atom = self.atom_store._row_to_atom(r)
                     if atom.atom_id not in seen_ids:
                         atoms.append(atom)
-            except Exception:
-                pass
+            except Exception as e:
+                from .logger import logger
+                logger.warning(f"[Memory] LIKE 补充搜索失败: {e}")
 
-        return atoms
+        # 多样性排序：按主实体（entities 第一个或 content 前 4 字）分组，
+        # 每组取重要度最高的 1 条，保证召回结果覆盖不同的人和事
+        groups: dict[str, list[MemoryAtom]] = {}
+        for a in atoms:
+            key = (a.entities[0] if a.entities else a.content[:4]).replace("\n", " ")
+            groups.setdefault(key, []).append(a)
+        for key in groups:
+            groups[key].sort(key=lambda x: -x.importance)
+
+        # 轮询取每组的 top1，填满 k 条
+        result = []
+        while len(result) < k and groups:
+            to_remove = []
+            for key, group in groups.items():
+                if group:
+                    result.append(group.pop(0))
+                if not group:
+                    to_remove.append(key)
+            for key in to_remove:
+                del groups[key]
+            if not any(g for g in groups.values()):
+                break
+
+        return result[:k]
 
     async def get_context_memories(
         self, user_id: str, query: str, k: int | None = None

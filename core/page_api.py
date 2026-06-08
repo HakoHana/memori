@@ -281,42 +281,34 @@ class PageApi:
         except Exception as e:
             return self._error(str(e))
 
-    async def delete_memory(self):
-        """删除日记条目，仅清理其独占的原子事实
+    async def _delete_single_diary(self, diary_id: int) -> int:
+        """删除单篇日记及其独占原子，返回清理的原子数"""
+        exclusive = await self._fetch("""
+            SELECT ma.id FROM memory_atoms ma
+            WHERE ma.diary_id=? AND ma.status='active'
+            AND (SELECT COUNT(*) FROM memory_atoms sub
+                 WHERE sub.content=ma.content AND sub.user_id=ma.user_id
+                 AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
+        """, (diary_id,))
+        eids = [r[0] for r in exclusive]
+        if eids:
+            placeholders = ",".join("?" * len(eids))
+            await self._execute(
+                f"UPDATE memory_atoms SET status='forgotten' WHERE id IN ({placeholders})", eids
+            )
+        await self._execute("DELETE FROM diary_entries WHERE id=?", (diary_id,))
+        return len(eids)
 
-        规则：原子只关联了这篇日记 → 一起删
-              原子还被其他日记关联着 → 保留（只去掉本日记的关联）
-        """
+    async def delete_memory(self):
+        """删除日记条目，仅清理其独占的原子事实"""
         try:
             from quart import request
             body = await request.get_json()
             diary_id = body.get("id", 0)
             if not diary_id:
                 return self._error("id required")
-
-            # 找出被本篇日记独占的原子（仅此一篇日记引用）
-            exclusive = await self._fetch("""
-                SELECT ma.id FROM memory_atoms ma
-                WHERE ma.diary_id=? AND ma.status='active'
-                AND (SELECT COUNT(*) FROM memory_atoms sub
-                     WHERE sub.content=ma.content AND sub.user_id=ma.user_id
-                     AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
-            """, (diary_id,))
-
-            exclusive_ids = [r[0] for r in exclusive]
-
-            # 从日记中删除原子关联
-            await self._execute(
-                "UPDATE memory_atoms SET status='forgotten' WHERE id IN ({})".format(
-                    ",".join("?" * len(exclusive_ids))
-                ) if exclusive_ids else "SELECT 1 WHERE 0",
-                exclusive_ids,
-            )
-
-            # 删除日记本身
-            await self._execute("DELETE FROM diary_entries WHERE id=?", (diary_id,))
-
-            return self._ok({"deleted": True, "exclusive_atoms": len(exclusive_ids)})
+            n = await self._delete_single_diary(diary_id)
+            return self._ok({"deleted": True, "exclusive_atoms": n})
         except Exception as e:
             return self._error(str(e))
 
@@ -326,29 +318,10 @@ class PageApi:
             from quart import request
             body = await request.get_json()
             ids = body.get("ids", [])
-
-            total_exclusive = 0
+            total = 0
             for did in ids:
-                exclusive = await self._fetch("""
-                    SELECT ma.id FROM memory_atoms ma
-                    WHERE ma.diary_id=? AND ma.status='active'
-                    AND (SELECT COUNT(*) FROM memory_atoms sub
-                         WHERE sub.content=ma.content AND sub.user_id=ma.user_id
-                         AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
-                """, (did,))
-
-                eids = [r[0] for r in exclusive]
-                if eids:
-                    await self._execute(
-                        "UPDATE memory_atoms SET status='forgotten' WHERE id IN ({})".format(
-                            ",".join("?" * len(eids))
-                        ), eids,
-                    )
-                    total_exclusive += len(eids)
-
-                await self._execute("DELETE FROM diary_entries WHERE id=?", (did,))
-
-            return self._ok({"deleted": len(ids), "exclusive_atoms": total_exclusive})
+                total += await self._delete_single_diary(did)
+            return self._ok({"deleted": len(ids), "exclusive_atoms": total})
         except Exception as e:
             return self._error(str(e))
 

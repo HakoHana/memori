@@ -92,10 +92,16 @@ class MemoryPlugin(Star):
             uid = self.memory_core.context_provider.get_user_id(event)
             sender_name = self._get_sender_name(event)
 
-            # 注册/更新用户名
+            # 注册/更新用户名（双写：旧表 + 新身份体系）
             if self.memory_core.atom_store and uid:
                 try:
                     await self.memory_core.atom_store.ensure_user(uid, sender_name)
+                except Exception:
+                    pass
+                try:
+                    await self.memory_core.atom_store.ensure_canonical_user(
+                        f"qq:{uid}", sender_name, "qq"
+                    )
                 except Exception:
                     pass
 

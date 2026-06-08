@@ -99,6 +99,42 @@
     return end === -1 ? text : text.substring(end + 4).trim();
   }
 
+  function stripMarkdown(text) {
+    if (!text) return "";
+    return text
+      // 代码块 ```...```
+      .replace(/```[\s\S]*?```/g, "")
+      // 行内代码 `code`
+      .replace(/`([^`]+)`/g, "$1")
+      // 图片 ![alt](url)
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      // 链接 [text](url)
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      // 粗体 **text** / __text__
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      // 斜体 *text* / _text_（避免吃掉单词下划线）
+      .replace(/\*([^*\n]+)\*/g, "$1")
+      // 删除线 ~~text~~
+      .replace(/~~([^~]+)~~/g, "$1")
+      // 标题标记 ###
+      .replace(/^#{1,6}\s+/gm, "")
+      // 列表标记 - / * / + / 1.
+      .replace(/^[\s]*[-*+]\s+/gm, "")
+      .replace(/^\s*\d+\.\s+/gm, "")
+      // 引用 >
+      .replace(/^>\s+/gm, "")
+      // 水平线 ---
+      .replace(/^---+$/gm, "")
+      // 多个空行合并
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function cleanDisplayText(text) {
+    return stripMarkdown(stripFrontmatter(text || ""));
+  }
+
   function renderWikilinks(text) {
     return esc(text).replace(/\[\[([^\]]+?)\]\]/g, '<a class="wikilink" onclick="searchWikilink(\'$1\')" style="color:var(--accent);cursor:pointer;text-decoration:underline">$1</a>');
   }
@@ -464,9 +500,10 @@
     html += '<button class="btn btn-sm btn-danger" id="peek-delete-btn">' + window.t("detail.deleteBtn") + '</button>';
     html += '</div>';
 
-    /* Content section (render [[links]] as clickable tags) */
+    /* Content section — clean markdown/yaml, keep wikilinks clickable */
+    var displayContent = cleanDisplayText(content);
     html += '<div class="peek-section"><div class="peek-section-title">' + window.t("detail.content") + '</div>';
-    html += '<div class="memory-detail-content" id="detail-content-display" style="white-space:pre-wrap;line-height:1.6">' + renderWikilinks(content) + '</div></div>';
+    html += '<div class="memory-detail-content" id="detail-content-display" style="white-space:pre-wrap;line-height:1.6">' + renderWikilinks(displayContent) + '</div></div>';
 
     /* Graph Context mini view */
     if (graphCtx && graphCtx.nodes && graphCtx.nodes.length) {
@@ -892,7 +929,7 @@
           id: item.id,
           memory_id: item.id,
           date: item.date || "",
-          summary: (item.content || "").slice(0, 200),
+          summary: cleanDisplayText(item.content || "").slice(0, 200),
           content: item.content || "",
           memory_type: typeStr,
           importance: item.avg_importance != null ? Math.round(item.avg_importance * 10 * 10) / 10 : 5,

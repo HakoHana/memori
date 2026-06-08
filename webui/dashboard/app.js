@@ -99,6 +99,30 @@
     return end === -1 ? text : text.substring(end + 4).trim();
   }
 
+  function stripMarkdown(text) {
+    if (!text) return "";
+    return text
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      .replace(/\*([^*\n]+)\*/g, "$1")
+      .replace(/~~([^~]+)~~/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^[\s]*[-*+]\s+/gm, "")
+      .replace(/^\s*\d+\.\s+/gm, "")
+      .replace(/^>\s+/gm, "")
+      .replace(/^---+$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function cleanDisplayText(text) {
+    return stripMarkdown(stripFrontmatter(text || ""));
+  }
+
   function renderWikilinks(text) {
     return esc(text).replace(/\[\[([^\]]+?)\]\]/g, '<a class="wikilink" onclick="searchWikilink(\'$1\')" style="color:var(--accent);cursor:pointer;text-decoration:underline">$1</a>');
   }
@@ -466,9 +490,10 @@
     html += '<button class="btn btn-sm btn-danger" id="peek-delete-btn">' + window.t("detail.deleteBtn") + '</button>';
     html += '</div>';
 
-    /* Content section (render [[links]] as clickable tags) */
+    /* Content section — clean markdown/yaml, keep wikilinks clickable */
+    var displayContent = cleanDisplayText(content);
     html += '<div class="peek-section"><div class="peek-section-title">' + window.t("detail.content") + '</div>';
-    html += '<div class="memory-detail-content" id="detail-content-display" style="white-space:pre-wrap;line-height:1.6">' + renderWikilinks(content) + '</div></div>';
+    html += '<div class="memory-detail-content" id="detail-content-display" style="white-space:pre-wrap;line-height:1.6">' + renderWikilinks(displayContent) + '</div></div>';
 
     /* Graph Context mini view */
     if (graphCtx && graphCtx.nodes && graphCtx.nodes.length) {
@@ -894,7 +919,7 @@
           id: item.id,
           memory_id: item.id,
           date: item.date || "",
-          summary: (item.content || "").slice(0, 200),
+          summary: cleanDisplayText(item.content || "").slice(0, 200),
           content: item.content || "",
           memory_type: typeStr,
           importance: item.avg_importance != null ? Math.round(item.avg_importance * 10 * 10) / 10 : 5,

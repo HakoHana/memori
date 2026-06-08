@@ -138,7 +138,8 @@ class MemoryPlugin(Star):
             txt = self.memory_core.context_provider.get_conversation_text(event)
 
             # 预过滤：新用户/噪声消息直接丢弃（不经过 LLM）
-            if txt and not txt.startswith("/") and uid:
+            # 可在插件配置界面关闭（pre_filter_enabled = false）
+            if txt and not txt.startswith("/") and uid and self.config.get("pre_filter_enabled", False):
                 try:
                     if await self.memory_core.should_ignore(uid, txt):
                         event.message_str = ""

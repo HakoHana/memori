@@ -157,6 +157,32 @@ class MemoryCore:
             except Exception as e:
                 logger.warning(f"[Memory] 初始化 bot 身份失败: {e}")
 
+        # 兼容旧数据库：补齐 diary_entries 的 archived 列
+        if self.diary_store:
+            try:
+                await self.diary_store.execute(
+                    "ALTER TABLE diary_entries ADD COLUMN archived INTEGER DEFAULT 0"
+                )
+            except Exception:
+                pass
+
+        # 归档模块
+        if self.diary_store and self.config.get("archive", {}).get("enabled", True):
+            try:
+                from .archiver import Archiver
+                self.archiver = Archiver(
+                    diary_store=self.diary_store,
+                    archive_dir=self.config.get("archive", {}).get("path", "./memory_archive"),
+                    config=self.config,
+                )
+                archive_task = asyncio.ensure_future(self._archive_loop())
+                self._background_tasks.add(archive_task)
+                archive_task.add_done_callback(self._background_tasks.discard)
+            except Exception as e:
+                logger.warning(f"[Memory] 初始化归档模块失败: {e}")
+        else:
+            self.archiver = None
+
         # 索引一致性检查（异步，不阻塞初始化）
         task = asyncio.ensure_future(self._async_index_check(db_path))
         self._background_tasks.add(task)
@@ -268,6 +294,24 @@ class MemoryCore:
                 break
             except Exception as e:
                 logger.warning(f"[Memory] 重要度衰减异常: {e}")
+                await asyncio.sleep(3600)
+
+    async def _archive_loop(self):
+        """定期归档冷数据（每天运行一次）"""
+        while not self._initialized:
+            await asyncio.sleep(3600)
+        while True:
+            try:
+                await asyncio.sleep(86400)
+                if not hasattr(self, 'archiver') or not self.archiver:
+                    continue
+                archived = await self.archiver.archive_daily()
+                if archived:
+                    logger.info(f"[Memory] 归档完成: {archived} 条")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[Memory] 归档异常: {e}")
                 await asyncio.sleep(3600)
 
     async def destroy(self):

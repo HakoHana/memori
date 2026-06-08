@@ -94,9 +94,35 @@
 
   /* ── frontmatter 处理 ── */
   function stripFrontmatter(text) {
-    if (!text || !text.startsWith("---")) return text || "";
-    var end = text.indexOf("\n---", 3);
-    return end === -1 ? text : text.substring(end + 4).trim();
+    if (!text) return "";
+    // 标准格式：---\n...\n---\nbody
+    if (text.startsWith("---")) {
+      var end = text.indexOf("\n---", 3);
+      if (end !== -1) return text.substring(end + 4).trim();
+    }
+    // 裸 YAML：开头的若干行 key: value 没有 --- 包裹
+    // 连续匹配前几行是否像 frontmatter（已知字段或 key: value 模式）
+    var lines = text.split("\n");
+    var fmKeys = ["date", "mood", "importance", "topics", "sentiment", "diary_id",
+                  "atom_count", "tags", "tier", "version"];
+    var fmLineCount = 0;
+    for (var i = 0; i < lines.length && i < 20; i++) {
+      var line = lines[i].trim();
+      if (!line) { fmLineCount++; continue; } // 空行也算在 frontmatter 区
+      var m = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (m && (fmKeys.indexOf(m[1]) !== -1 || i < 3)) {
+        fmLineCount++;
+      } else {
+        break; // 遇到非 frontmatter 行就停
+      }
+    }
+    if (fmLineCount > 0) {
+      // 跳过 frontmatter 行及其后的空行
+      text = lines.slice(fmLineCount).join("\n").trim();
+      // 跳过紧随 frontmatter 后的空行/分隔线
+      text = text.replace(/^---+/, "").trim();
+    }
+    return text;
   }
 
   function stripMarkdown(text) {

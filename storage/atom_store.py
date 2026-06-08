@@ -558,33 +558,39 @@ class AtomStore(BaseDbStore, MemoryStore):
         return row[0] if row else ""
 
     async def save_persona(self, uid: str, summary: str, full: str = "",
-                            incremental: bool = False):
+                            incremental: bool = False, tags: str = ""):
         """保存或更新用户画像"""
         import time
         now = time.time()
         existing = await self.fetchone(
             "SELECT uid FROM user_persona WHERE uid=?", (uid,)
         )
+        # 兼容旧数据库：补齐 tags 列
+        try:
+            await self.execute("ALTER TABLE user_persona ADD COLUMN tags TEXT DEFAULT '[]'")
+        except Exception:
+            pass
+
         if existing:
             if incremental:
                 await self.execute("""
-                    UPDATE user_persona SET summary=?, full_markdown=?,
+                    UPDATE user_persona SET summary=?, full_markdown=?, tags=?,
                         last_incremental_update=?, incremental_count=incremental_count+1,
                         diary_count_since_full=diary_count_since_full+1, updated_at=?
                     WHERE uid=?
-                """, (summary, full, now, now, uid))
+                """, (summary, full, tags, now, now, uid))
             else:
                 await self.execute("""
-                    UPDATE user_persona SET summary=?, full_markdown=?,
+                    UPDATE user_persona SET summary=?, full_markdown=?, tags=?,
                         version=version+1, last_full_update=?, incremental_count=0,
                         diary_count_since_full=0, updated_at=?
                     WHERE uid=?
-                """, (summary, full, now, uid))
+                """, (summary, full, tags, now, uid))
         else:
             await self.execute("""
-                INSERT INTO user_persona (uid, summary, full_markdown, version, last_full_update, created_at, updated_at)
-                VALUES (?,?,?,1,?,?,?)
-            """, (uid, summary, full, now, now, now))
+                INSERT INTO user_persona (uid, summary, full_markdown, tags, version, last_full_update, created_at, updated_at)
+                VALUES (?,?,?,?,1,?,?,?)
+            """, (uid, summary, full, tags, now, now, now))
 
     # ═══════════════════════════════════════════════════
     #  内部工具

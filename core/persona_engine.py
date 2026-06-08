@@ -15,6 +15,8 @@ from .capturer import Capturer
 _INC_PROMPT = """当前用户画像（截至 {old_timestamp}）：
 {old_summary}
 
+当前标签：{old_tags}
+
 最近新增的日记（最多5篇）：
 {new_diaries}
 
@@ -25,9 +27,11 @@ _INC_PROMPT = """当前用户画像（截至 {old_timestamp}）：
 {{
   "add": ["新增的特征1", "新增的特征2"],
   "modify": [{{"old": "原描述片段", "new": "修正后的描述"}}],
-  "delete": ["完全过时的特征"]
+  "delete": ["完全过时的特征"],
+  "tags": ["标签1", "标签2", "标签3"]
 }}
-注意：只输出变化部分，不要输出未变化的原有内容。"""
+注意：tags 是 3~5 个最能概括用户特征的关键词，如 ["技术", "Python", "本地部署"]。
+只输出变化部分，不要输出未变化的原有内容。"""
 
 
 class PersonaEngine:
@@ -105,9 +109,16 @@ class PersonaEngine:
                 return False
 
         old_row = await self.atom_store.fetchone(
-            "SELECT updated_at FROM user_persona WHERE uid=?", (uid,)
+            "SELECT updated_at, tags FROM user_persona WHERE uid=?", (uid,)
         )
         old_ts = old_row[0] if old_row else "从未"
+        old_tags = ""
+        if old_row and old_row[1]:
+            try:
+                import json
+                old_tags = ", ".join(json.loads(old_row[1]))
+            except Exception:
+                old_tags = ""
 
         diaries_text = "\n".join(f"- {d[:200]}" for d in (new_diaries or [])[-5:])
         facts_text = "\n".join(f"- {f[:200]}" for f in (new_facts or [])[-10:])
@@ -118,6 +129,7 @@ class PersonaEngine:
         prompt = self._prompt_inc.format(
             old_timestamp=old_ts,
             old_summary=old_summary,
+            old_tags=old_tags or "（无标签）",
             new_diaries=diaries_text or "（无新日记）",
             new_facts=facts_text or "（无新事实）",
         )
@@ -161,26 +173,28 @@ class PersonaEngine:
                 return
 
             new_summary = old_summary
-            # delete
             for item in data.get("delete", []):
                 new_summary = new_summary.replace(str(item), "")
-            # modify
             for item in data.get("modify", []):
                 old_text = str(item.get("old", ""))
                 new_text = str(item.get("new", ""))
                 if old_text:
                     new_summary = new_summary.replace(old_text, new_text)
-            # add
             for item in data.get("add", []):
                 new_summary += f"\n- {item}"
 
-            new_summary = "\n".join(
-                line for line in new_summary.split("\n") if line.strip()
-            )
+            new_summary = "\n".join(l for l in new_summary.split("\n") if l.strip())
             if not new_summary:
                 new_summary = old_summary
 
-            await self.atom_store.save_persona(uid, new_summary, incremental=True)
+            # 提取标签
+            tags = data.get("tags", [])
+            if isinstance(tags, list):
+                tags = json.dumps([t for t in tags if isinstance(t, str)], ensure_ascii=False)
+            else:
+                tags = ""
+
+            await self.atom_store.save_persona(uid, new_summary, incremental=True, tags=tags)
             self._cache.pop(uid, None)
         except Exception as e:
             logger.warning(f"[Memory] 应用增量 diff 失败: {e}")

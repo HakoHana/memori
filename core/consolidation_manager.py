@@ -137,8 +137,19 @@ class ConsolidationManager:
         self._mark_dirty(user_id)
 
         # 给对话文本附加用户身份，让 LLM 能分清谁说了什么
+        display_name = user_id
+        try:
+            if hasattr(self, 'capturer') and self.capturer and hasattr(self.capturer, 'atom_store'):
+                row = await self.capturer.atom_store.fetchone(
+                    "SELECT user_name FROM user_registry WHERE user_id=?", (user_id,)
+                )
+                if row and row[0]:
+                    display_name = row[0]
+        except Exception:
+            pass
+
         if conversation_text and not conversation_text.startswith("["):
-            tagged = f"[{user_id}]: {conversation_text}"
+            tagged = f"[{display_name}]: {conversation_text}"
         else:
             tagged = conversation_text
 

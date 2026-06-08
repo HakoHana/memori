@@ -43,13 +43,30 @@ class Retriever:
         return imp / total, rank / total  # 归一化，确保加起来=1
 
     async def recall(self, user_id: str, query: str, k: int | None = None) -> list[MemoryAtom]:
-        """搜索相关记忆原子"""
+        """搜索相关记忆原子（FTS5 + LIKE 中文兜底）"""
         k = k or self.recall_count
         if not query or not query.strip():
             return []
 
         imp_w, rank_w = self._search_weights()
         atoms = await self.atom_store.search_fts(query, user_id, k, imp_w, rank_w)
+
+        # FTS5 对中文支持有限，不足 k 条时用 LIKE 补充
+        if len(atoms) < k:
+            try:
+                rows = await self.atom_store.fetch("""
+                    SELECT * FROM memory_atoms
+                    WHERE user_id=? AND status='active' AND content LIKE ?
+                    ORDER BY importance DESC LIMIT ?
+                """, (user_id, f"%{query}%", k - len(atoms)))
+                seen_ids = {a.atom_id for a in atoms}
+                for r in rows:
+                    atom = self.atom_store._row_to_atom(r)
+                    if atom.atom_id not in seen_ids:
+                        atoms.append(atom)
+            except Exception:
+                pass
+
         return atoms
 
     async def get_context_memories(

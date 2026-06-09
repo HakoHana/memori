@@ -71,6 +71,10 @@ class ConsolidationManager:
         self._last_trigger_check: dict[str, float] = {}
         self._pending_counts: dict[str, int] = {}  # 内存计数器
 
+        # 全局限速：防止群聊水群时疯狂整理
+        self._global_last_consolidation: float = 0.0
+        self._min_global_interval: float = 120.0  # 两次整理之间至少间隔 120 秒
+
         self._destroyed = False
 
     async def initialize(self):
@@ -157,18 +161,14 @@ class ConsolidationManager:
         should_trigger = False
         trigger_reason = ""
 
-        # A：消息数达到阈值
-        threshold = (
-            state.warmup_threshold
-            if self.warmup_enabled and state.warmup_threshold > 0
-            else self.trigger_msg_count
-        )
-        if state.msg_count >= threshold:
-            should_trigger = True
-            trigger_reason = f"消息数达到 {threshold}"
+        # 全局限速：距上次整理不足 2 分钟，跳过（群聊防刷）
+        now_for_rate = time.time()
+        if self._global_last_consolidation > 0 and now_for_rate - self._global_last_consolidation < self._min_global_interval:
+            logger.debug(f"[Memory] 全局限速: 距上次整理 {now_for_rate - self._global_last_consolidation:.0f}s，跳过")
+            return None
 
-        # B：即时捕捉（重要事件）
-        if self.immediate_capture and not should_trigger:
+        # A：即时捕捉（重要事件，如用户告白、重要约定等）
+        if self.immediate_capture:
             try:
                 judge = await self.capturer.should_capture(tagged)
                 if judge.should_remember and judge.importance >= 0.7:
@@ -180,7 +180,7 @@ class ConsolidationManager:
             except Exception:
                 pass
 
-        # C：时间间隔
+        # B：时间间隔
         if not should_trigger and self.trigger_time_minutes > 0:
             elapsed = time.time() - state.last_consolidated_at
             if elapsed >= self.trigger_time_minutes * 60:
@@ -231,6 +231,7 @@ class ConsolidationManager:
 
     async def _after_consolidation(self, user_id: str, result: CaptureResult):
         """整理后的收尾工作"""
+        self._global_last_consolidation = time.time()
         state = self._get_or_create_state(user_id)
         state.reset_after_consolidation()
 

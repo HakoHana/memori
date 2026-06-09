@@ -152,7 +152,7 @@ class PersistedSessionState:
     """持久化的会话状态 — 每个用户一份"""
     user_id: str
     msg_count: int = 0
-    warmup_threshold: int = 1          # 0 = 已完成暖启动
+    warmup_threshold: int = 3          # 初始暖启动阈值（第3条消息才触发首次整理）
     last_consolidated_at: float = 0.0
     last_diary_date: str = ""
     diary_count: int = 0

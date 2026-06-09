@@ -24,6 +24,7 @@ async function loadConfig {
         setValue('decay_rate', config.decay_rate ?? 0.99);
         setValue('search_imp_weight', config.search_imp_weight ?? 0.6);
         setValue('search_rank_weight', config.search_rank_weight ?? 0.4);
+        setValue('pre_filter_enabled', config.pre_filter_enabled ?? false);
 
         // 高亮选中的 radio
         document.querySelectorAll('.radio-group label').forEach(el => {
@@ -57,6 +58,7 @@ async function saveConfig {
         decay_rate: parseFloat(getValue('decay_rate')) || 0.99,
         search_imp_weight: parseFloat(getValue('search_imp_weight')) || 0.6,
         search_rank_weight: parseFloat(getValue('search_rank_weight')) || 0.4,
+        pre_filter_enabled: getValue('pre_filter_enabled') === true || getValue('pre_filter_enabled') === 'true',
     };
 
     try {

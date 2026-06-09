@@ -1,7 +1,8 @@
-"""检索引擎 — 召回相关记忆（混合：原子 + 日记全文）"""
+"""检索引擎 — 召回相关记忆（混合：RRF 多路融合）"""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..models.memory_atom import MemoryAtom, RecallResult
@@ -33,66 +34,120 @@ class Retriever:
         self.recall_count = self.config.get("recall_count", 5)
         self.recall_max_tokens = self.config.get("recall_max_tokens", 500)
 
-    def _search_weights(self) -> tuple[float, float]:
-        """从配置读取搜索权重"""
-        imp = float(self.config.get("search_imp_weight", 0.6))
-        rank = float(self.config.get("search_rank_weight", 0.4))
-        total = imp + rank
-        if total <= 0:
-            return 0.6, 0.4
-        return imp / total, rank / total  # 归一化，确保加起来=1
+    # ── RRF 融合 ──
+    RRF_K = 60
+
+    @staticmethod
+    def _rrf_merge(lists: list[list[MemoryAtom]], k: int) -> list[MemoryAtom]:
+        """RRF 融合多路搜索：在越多列表中排名越靠前的原子得分越高"""
+        scores: dict[int, float] = {}
+        atoms: dict[int, MemoryAtom] = {}
+        for ranked_list in lists:
+            for rank, atom in enumerate(ranked_list):
+                aid = atom.atom_id
+                scores[aid] = scores.get(aid, 0.0) + 1.0 / (Retriever.RRF_K + rank + 1)
+                atoms[aid] = atom
+        sorted_ids = sorted(scores, key=lambda x: -scores[x])
+        return [atoms[aid] for aid in sorted_ids[:k]]
+
+    @staticmethod
+    def _segment(text: str) -> list[str]:
+        """Unicode 正则分词：提取中英文、数字、下划线序列"""
+        if not text or not text.strip():
+            return []
+        return re.findall(r'[\w]+', text, re.UNICODE)
+
+    _ZH_STOP = frozenset({
+        "的", "了", "在", "是", "我", "你", "他", "她", "它",
+        "有", "不", "也", "就", "都", "而", "及", "与", "和",
+        "这", "那", "什么", "怎么", "吗", "吧", "呢", "啊", "哦",
+        "嗯", "哈", "呀", "啦", "嘛", "一个", "这个", "那个",
+        "会", "能", "可以", "要", "想", "给", "把", "被",
+        "好", "很", "太", "更", "最", "真", "还", "又", "再",
+    })
+
+    def _keyword_list(self, text: str) -> list[str]:
+        """提取关键词：Unicode 分词 + 中文 2gram（不加单字，减少噪音）"""
+        tokens = self._segment(text)
+        keywords = []
+        for token in tokens:
+            if re.match(r'^[a-z0-9_]+$', token.lower()):
+                # 纯英文/数字词作为整体
+                if token.lower() not in keywords:
+                    keywords.append(token.lower())
+            else:
+                # 中文：2-gram
+                chars = list(token)
+                for i in range(len(chars) - 1):
+                    bg = chars[i] + chars[i+1]
+                    if bg not in self._ZH_STOP and bg not in keywords:
+                        keywords.append(bg)
+        # 去重 + 截断
+        seen = set()
+        return [k for k in keywords if not (k in seen or seen.add(k))][:15]
 
     async def recall(self, user_id: str, query: str, k: int | None = None) -> list[MemoryAtom]:
-        """搜索相关记忆原子（去重 + 多样性排序）"""
+        """召回：关键词匹配计数 + 重要度 加权排序"""
         k = k or self.recall_count
         if not query or not query.strip():
             return []
 
-        imp_w, rank_w = self._search_weights()
-        top_k = k * 3  # 多取候选，再按多样性截断
-        atoms = await self.atom_store.search_fts(query, user_id, top_k, imp_w, rank_w)
+        extra_ids = await self.atom_store.get_related_user_ids(user_id)
+        all_uids = list(set([user_id] + extra_ids))
+        keywords = self._keyword_list(query)
 
-        # FTS5 对中文支持有限，不足时用 LIKE 补充候选
-        if len(atoms) < top_k:
-            try:
-                rows = await self.atom_store.fetch("""
-                    SELECT * FROM memory_atoms
-                    WHERE user_id=? AND status='active' AND content LIKE ?
-                    ORDER BY importance DESC LIMIT ?
-                """, (user_id, f"%{query}%", top_k - len(atoms)))
-                seen_ids = {a.atom_id for a in atoms}
-                for r in rows:
-                    atom = self.atom_store._row_to_atom(r)
-                    if atom.atom_id not in seen_ids:
-                        atoms.append(atom)
-            except Exception as e:
-                from .logger import logger
-                logger.warning(f"[Memory] LIKE 补充搜索失败: {e}")
+        # ── 关键词计数 ──
+        score: dict[int, float] = {}
+        atoms: dict[int, MemoryAtom] = {}
+        for kw in keywords:
+            for uid in all_uids:
+                try:
+                    rows = await self.atom_store.fetch(
+                        "SELECT * FROM memory_atoms WHERE user_id=? AND status='active' AND content LIKE ? ORDER BY importance DESC LIMIT ?",
+                        (uid, f"%{kw}%", k * 4),
+                    )
+                    for r in rows:
+                        atom = self.atom_store._row_to_atom(r)
+                        aid = atom.atom_id
+                        score[aid] = score.get(aid, 0.0) + 1.0  # 每匹配一个关键词 +1
+                        atoms[aid] = atom
+                except Exception:
+                    pass
 
-        # 多样性排序：按主实体（entities 第一个或 content 前 4 字）分组，
-        # 每组取重要度最高的 1 条，保证召回结果覆盖不同的人和事
-        groups: dict[str, list[MemoryAtom]] = {}
-        for a in atoms:
-            key = (a.entities[0] if a.entities else a.content[:4]).replace("\n", " ")
-            groups.setdefault(key, []).append(a)
-        for key in groups:
-            groups[key].sort(key=lambda x: -x.importance)
+        # ── 关键词未命中时，重要度回退 ──
+        if len(atoms) < k:
+            for uid in all_uids:
+                try:
+                    rows = await self.atom_store.fetch(
+                        "SELECT * FROM memory_atoms WHERE user_id=? AND status='active' ORDER BY importance DESC, id DESC LIMIT ?",
+                        (uid, k * 3),
+                    )
+                    for r in rows:
+                        atom = self.atom_store._row_to_atom(r)
+                        aid = atom.atom_id
+                        if aid not in atoms:
+                            score[aid] = 0.0
+                            atoms[aid] = atom
+                except Exception:
+                    pass
 
-        # 轮询取每组的 top1，填满 k 条
-        result = []
-        while len(result) < k and groups:
-            to_remove = []
-            for key, group in groups.items():
-                if group:
-                    result.append(group.pop(0))
-                if not group:
-                    to_remove.append(key)
-            for key in to_remove:
-                del groups[key]
-            if not any(g for g in groups.values()):
-                break
+        # ── 综合评分排序 ──
+        max_id = max(atoms.keys()) if atoms else 1
+        def _sort_key(a: MemoryAtom) -> tuple:
+            s = score[a.atom_id]
+            c = a.content or ""
+            meta = 3 if re.match(r'^(一位|用户)', c) else 0
+            age = a.atom_id / max_id  # 0=最旧 1=最新
+            # 匹配数×0.2 + 重要度×0.5 + 年龄优势×0.3 - 元描述惩罚
+            combined = s * 0.2 + a.importance * 0.5 + (1 - age) * 0.3 - meta * 0.1
+            return (-combined, a.atom_id)
 
-        return result[:k]
+        sorted_atoms = sorted(atoms.values(), key=_sort_key)
+
+        with open('/tmp/recall_debug.txt', 'a') as _f:
+            _f.write(f"recall uid={user_id} matched={len(atoms)} returned={min(k, len(sorted_atoms))} keywords={keywords}\n")
+
+        return sorted_atoms[:k]
 
     async def get_context_memories(
         self, user_id: str, query: str, k: int | None = None

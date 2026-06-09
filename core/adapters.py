@@ -46,37 +46,46 @@ class ContextProvider(ABC):
 # ── AstrBot 实现 ──
 
 class AstrBotLLMProvider(LLMProvider):
-    """封装 AstrBot 的 LLM Provider 调用"""
+    """封装 AstrBot 的 LLM Provider 调用，支持判读/整理分离"""
 
     def __init__(self, context):
         self.context = context
         self._provider = None
         self._provider_id = None
+        self._judge_provider = None
+        self._judge_provider_id = None
 
     def set_provider(self, provider_id: str | None):
-        """指定使用哪个 Provider。None = 使用 AstrBot 默认"""
         self._provider_id = provider_id
-        self._provider = None  # 触发重新获取
+        self._provider = None
 
-    def _get_provider(self):
-        """获取当前有效的 Provider 实例"""
-        if self._provider:
-            return self._provider
+    def set_judge_provider(self, provider_id: str | None):
+        """判读用模型（便宜的），None = 和主模型相同"""
+        self._judge_provider_id = provider_id
+        self._judge_provider = None
 
-        if self._provider_id:
+    def _get_provider(self, use_judge: bool = False):
+        key = "_judge_provider" if use_judge else "_provider"
+        pid = "_judge_provider_id" if use_judge else "_provider_id"
+        pid_val = getattr(self, pid, None)
+        cached = getattr(self, key, None)
+        if cached:
+            return cached
+        if pid_val:
             try:
-                self._provider = self.context.get_provider_by_id(self._provider_id)
-                if self._provider:
-                    return self._provider
+                p = self.context.get_provider_by_id(pid_val)
+                if p:
+                    setattr(self, key, p)
+                    return p
             except Exception:
                 pass
+        p = self.context.get_using_provider()
+        setattr(self, key, p)
+        return p
 
-        self._provider = self.context.get_using_provider()
-        return self._provider
-
-    async def chat(self, system_prompt: str, user_prompt: str) -> str:
-        """调用 LLM 并返回文本"""
-        provider = self._get_provider()
+    async def chat(self, system_prompt: str, user_prompt: str, use_judge: bool = False) -> str:
+        """调用 LLM。use_judge=True 时用便宜判读模型"""
+        provider = self._get_provider(use_judge=use_judge)
         if not provider:
             raise RuntimeError("没有可用的 LLM Provider")
 

@@ -43,7 +43,28 @@ class MemoryPlugin(Star):
             memorize_tool = MemorizeMemoryTool()
             memorize_tool.set_memory_core(self.memory_core)
             self.context.add_llm_tools(recall_tool, memorize_tool)
+            # 强制激活工具（清除 inactivated_llm_tools 持久化记录）
+            self.context.activate_llm_tool("recall_long_term_memory")
+            self.context.activate_llm_tool("memorize_long_term_memory")
             logger.info("[Memory] Agent Tools 已注册")
+            # 诊断：写入 func_list 状态 + star_map
+            try:
+                tmgr = self.context.get_llm_tool_manager()
+                names = [t.name for t in tmgr.func_list]
+                debug_p = data_dir + "/debug_init.txt"
+                with open(debug_p, "w") as f:
+                    f.write(f"func_list: {names}\n")
+                    f.write(f"has recall: {'recall_long_term_memory' in names}\n")
+                    # 检查工具的 handler_module_path
+                    for t in tmgr.func_list:
+                        if t.name == 'recall_long_term_memory' or t.name == 'memorize_long_term_memory':
+                            f.write(f"  tool={t.name} mp={t.handler_module_path} active={t.active}\n")
+                    # star_map keys
+                    from astrbot.core.star.star import star_map
+                    f.write(f"star_map keys: {list(star_map.keys())}\n")
+                logger.info(f"[Memory] 诊断写入 {debug_p}")
+            except Exception as e2:
+                logger.warning(f"[Memory] 诊断写失败: {e2}")
         except Exception as e:
             logger.warning(f"[Memory] 注册 Agent Tools 失败: {e}")
         logger.info("[Memory] 初始化完成")
@@ -75,6 +96,14 @@ class MemoryPlugin(Star):
         from .core.context import current_user_id
         uid = self.memory_core.context_provider.get_user_id(event)
         current_user_id.set(uid)
+
+        # 诊断：标记 on_llm_request 入口
+        try:
+            init_flag = self.memory_core._initialized if hasattr(self.memory_core, '_initialized') else 'NO_ATTR'
+            with open('/tmp/recall_debug.txt', 'a') as _f:
+                _f.write(f"[on_llm] uid={uid} initialized={init_flag}\n")
+        except Exception:
+            pass
 
         try:
             raw_text = event.get_message_str() if hasattr(event, 'get_message_str') else str(event.message_str)
@@ -113,9 +142,39 @@ class MemoryPlugin(Star):
                 await cs.add_message(sid, uid, "user", raw_text, sender_name)
 
             # 记忆注入
-            result = await self.memory_core.on_message(event)
-            if result is not None:
-                event.message_obj.message_str = result
+            debug_p2 = str(self.memory_core.data_dir) + "/debug_req.txt"
+            try:
+                result = await self.memory_core.on_message(event)
+                if result is not None:
+                    event.message_obj.message_str = result
+                    with open(debug_p2, "a") as f:
+                        f.write(f"on_message 注入成功 ({len(result)} chars)\n")
+                else:
+                    with open(debug_p2, "a") as f:
+                        f.write(f"on_message 返回 None（已注入到 system_prompt）\n")
+                # 同步 event.system_prompt → req.system_prompt
+                if hasattr(event, 'system_prompt') and event.system_prompt and req and event.system_prompt != req.system_prompt:
+                    req.system_prompt = event.system_prompt
+                    with open(debug_p2, "a") as f:
+                        f.write(f"已同步 system_prompt 到 req\n")
+            except Exception as e_inject:
+                with open(debug_p2, "a") as f:
+                    f.write(f"on_message 异常: {e_inject}\n")
+
+            # 强制激活记忆工具（防止被 inactivated_llm_tools 反激活）
+            try:
+                tmgr2 = self.context.get_llm_tool_manager()
+                for tool_name in ["recall_long_term_memory", "memorize_long_term_memory"]:
+                    tool = tmgr2.get_func(tool_name)
+                    if tool:
+                        tool.active = True
+                        if req and req.func_tool and tool_name not in req.func_tool.names():
+                            req.func_tool.add_tool(tool)
+                debug_p2 = str(self.memory_core.data_dir) + "/debug_req.txt"
+                with open(debug_p2, "a") as f:
+                    f.write(f"激活后 req.func_tool: {req.func_tool.names() if req and req.func_tool else 'N/A'}\n")
+            except Exception as e_act:
+                logger.warning(f"[Memory] 激活工具诊断异常: {e_act}")
 
             # 更新用户等级（轻量，每 ~10 条消息才重算）
             try:
@@ -171,7 +230,11 @@ class MemoryPlugin(Star):
 
             if uid and txt:
                 logger.debug(f"[Memory] on_message: {uid}")
-                await self.memory_core.consolidation_manager.on_message(uid, txt)
+                task = asyncio.ensure_future(
+                    self.memory_core.consolidation_manager.on_message(uid, txt)
+                )
+                self.memory_core._background_tasks.add(task)
+                task.add_done_callback(self.memory_core._background_tasks.discard)
         except Exception as e:
             logger.error(f"[Memory] on_message 出错: {e}")
 
@@ -192,16 +255,6 @@ class MemoryPlugin(Star):
                     bot_name = getattr(event, "bot_name", "") or "Hana"
                     await cs.add_message(sid, uid, "assistant", resp_text, bot_name)
 
-            # 后台触发记忆整理
-            user_id = self.memory_core.context_provider.get_user_id(event)
-            text = self.memory_core.context_provider.get_conversation_text(event)
-            if user_id and text and self.memory_core:
-                logger.debug(f"[Memory] on_response 触发整理: {user_id}")
-                task = asyncio.ensure_future(
-                    self.memory_core.consolidation_manager.on_message(user_id, text)
-                )
-                self.memory_core._background_tasks.add(task)
-                task.add_done_callback(self.memory_core._background_tasks.discard)
         except Exception as e:
             logger.error(f"[Memory] on_response 出错: {e}")
 

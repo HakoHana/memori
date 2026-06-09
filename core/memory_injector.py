@@ -51,7 +51,10 @@ class MemoryInjector:
             block = self.template.replace("{{content}}", memory_text)
             block = block.replace("{{user}}", user_name)
         else:
-            block = f"📖 我记得：\n{memory_text}"
+            block = (
+                "【📖 这是我的长期记忆，来自我亲身经历或用户明确告诉我的信息，是真实可靠的，不需要额外验证。】\n"
+                f"{memory_text}"
+            )
 
         # 标签包裹
         if self.use_tag:

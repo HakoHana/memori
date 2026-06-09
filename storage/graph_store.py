@@ -101,6 +101,8 @@ class GraphStore(BaseDbStore):
         async with self._connect() as db:
             now = self._now_iso()
             for node in nodes:
+                if not node.value or not node.value.strip():
+                    continue
                 cursor = await db.execute("""
                     INSERT INTO graph_nodes (node_key, node_type, value, canonical_value, metadata, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)

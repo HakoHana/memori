@@ -67,7 +67,7 @@ class Capturer:
             )
         try:
             system = self._prompts["judge"]
-            result_str = await self.llm.chat(system, conversation_summary)
+            result_str = await self.llm.chat(system, conversation_summary, use_judge=True)
             return self._parse_judge_result(result_str, conversation_summary)
         except Exception as e:
             logger.warning(f"[Memory] Judge LLM 调用失败: {e}")
@@ -193,10 +193,9 @@ class Capturer:
         return await self._extract_atoms(diary_content, user_id, today)
 
     async def _reinforce_if_duplicate(self, atom, user_id: str) -> bool:
-        """检查原子是否与已有原子相似，相似则强化重要度并返回 True"""
+        """检查原子是否与已有原子相似，相似则强化，否则清除遗忘同类"""
         try:
             content = atom.content or ""
-            # 提取字符 bigram 作为 token（中英文通用）
             chars = content.replace(" ", "")
             if len(chars) < 4:
                 return False
@@ -204,8 +203,9 @@ class Capturer:
             if len(tokens) < 2:
                 return False
 
-            # FTS 搜索相似原子
             query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
+
+            # ── 检查 active 重复 → 强化 ──
             existing = await self.atom_store.search_fts(query, user_id, k=5)
             for ex in existing:
                 ex_chars = (ex.content or "").replace(" ", "")
@@ -219,15 +219,36 @@ class Capturer:
                     continue
                 jaccard = len(tokens & ex_tokens) / union
                 if jaccard >= 0.6:
-                    # 强化已有原子：重要度 +0.05
                     boosted = min(1.0, ex.importance + 0.05)
                     await self.atom_store.execute(
                         "UPDATE memory_atoms SET importance=?, confidence=?, access_count=access_count+1 WHERE id=?",
                         (boosted, max(atom.confidence, ex.confidence), ex.atom_id),
                     )
-                    # 同一篇日记的重复 → 跳过插入；不同日记的重复 → 两边都保留
                     if ex.diary_id == atom.diary_id:
                         return True
+
+            # ── 检查 forgotten 重复 → 删除旧原子，让新原子替代 ──
+            for uid in [user_id, "Hako"]:
+                try:
+                    rows = await self.atom_store.fetch(
+                        "SELECT id, content FROM memory_atoms WHERE user_id=? AND status='forgotten' AND diary_id=?",
+                        (uid, atom.diary_id),
+                    )
+                    for r in rows:
+                        old_c = (r[1] or "").replace(" ", "")
+                        if len(old_c) < 4:
+                            continue
+                        old_tokens = {old_c[i:i+2] for i in range(len(old_c) - 1)}
+                        if not old_tokens:
+                            continue
+                        u2 = len(tokens | old_tokens)
+                        if u2 == 0:
+                            continue
+                        if len(tokens & old_tokens) / u2 >= 0.6:
+                            await self.atom_store.execute("DELETE FROM memory_atoms WHERE id=?", (r[0],))
+                            await self.atom_store.execute("DELETE FROM memory_atoms_fts WHERE atom_id=?", (r[0],))
+                except Exception:
+                    pass
         except Exception:
             pass
         return False
@@ -245,11 +266,11 @@ class Capturer:
     def _detect_speaker_count(text: str) -> int:
         """从对话文本中检测说话人数（去重后的非 Bot 说话者数量）
 
-        格式：[昵称 | ID: xxx | 时间] ...
+        格式：[昵称]: 消息 或 [昵称 | ID: xxx | 时间] 消息
         """
         import re
         speakers = set()
-        for m in re.finditer(r'^\[([^|]+)\s*\|', text, re.MULTILINE):
+        for m in re.finditer(r'^\[([^\]|:]+)(?:\s*[|:]\s*|:\s*)', text, re.MULTILINE):
             name = m.group(1).strip()
             if not name.lower().startswith("bot"):
                 speakers.add(name)

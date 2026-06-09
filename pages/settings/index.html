@@ -129,6 +129,17 @@
     </div>
 
     <div class="card">
+        <h2> 消息预过滤</h2>
+        <div class="field">
+            <label>
+                <input type="checkbox" id="pre_filter_enabled">
+                启用预过滤（关闭 = 所有消息正常经过记忆系统；开启 = 仅重要消息触发记忆）
+            </label>
+            <div class="hint">关闭则每条消息都会经过记忆处理，适合调试。开启后低价值消息直接被丢弃，不进入 LLM</div>
+        </div>
+    </div>
+
+    <div class="card">
         <h2> 搜索排序</h2>
         <div class="field">
             <label for="search_imp_weight">重要度权重</label>

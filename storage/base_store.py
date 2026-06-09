@@ -26,8 +26,9 @@ class BaseDbStore:
         "PRAGMA journal_mode = WAL",
         "PRAGMA synchronous = NORMAL",
         "PRAGMA cache_size = -8000",
+        "PRAGMA busy_timeout = 30000",
     ]
-    _busy_timeout_ms: int = 5000
+    _busy_timeout_ms: int = 30000
     _max_retries: int = 3
     _retry_delay_base: float = 0.1
 

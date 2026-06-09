@@ -215,26 +215,35 @@ class AtomStore(BaseDbStore, MemoryStore):
     # ═══════════════════════════════════════════════════
 
     async def search_fts(self, query: str, user_id: str, k: int = 5,
-                          imp_weight: float = 0.6, rank_weight: float = 0.4) -> list[MemoryAtom]:
+                          imp_weight: float = 0.6, rank_weight: float = 0.4,
+                          extra_user_ids: list[str] | None = None) -> list[MemoryAtom]:
         """FTS5 全文搜索（按重要度 × BM25 排序）
 
         Args:
-            imp_weight: 重要度权重（0~1）
-            rank_weight: 匹配度权重（0~1）
+            extra_user_ids: 额外搜索的用户 ID，用于搜索关联身份的记忆
         """
         safe_query = self._sanitize_fts_query(query)
         if not safe_query:
             return []
 
+        # 构建用户 ID 条件：主 user_id + 额外 ID
+        all_uids = [user_id]
+        if extra_user_ids:
+            for eid in extra_user_ids:
+                if eid and eid != user_id and eid not in all_uids:
+                    all_uids.append(eid)
+        placeholders = ",".join("?" for _ in all_uids)
+
         # 多取一些候选，按重要度降序重排，让高重要度的匹配优先
         candidates = k * 3
-        rows = await self.fetch("""
+        sql = f"""
             SELECT a.*, rank FROM memory_atoms a
             JOIN memory_atoms_fts f ON a.id = f.atom_id
-            WHERE memory_atoms_fts MATCH ? AND a.user_id = ? AND a.status = 'active'
+            WHERE memory_atoms_fts MATCH ? AND a.user_id IN ({placeholders}) AND a.status = 'active'
             ORDER BY rank
             LIMIT ?
-        """, (safe_query, user_id, candidates))
+        """
+        rows = await self.fetch(sql, (safe_query, *all_uids, candidates))
 
         if not rows:
             return []
@@ -287,7 +296,51 @@ class AtomStore(BaseDbStore, MemoryStore):
         """, (user_id,))
         return {"total": total, "by_type": dict(by_type)}
 
-    async def get_all_active_user_ids(self) -> list[str]:
+    async def get_related_user_ids(self, user_id: str) -> list[str]:
+        """根据任一用户 ID/昵称，找到所有关联的 user_id（弥合 QQ 号和显示名的差异）
+
+        例如 2398604399 → 查出 ['2398604399', 'Hako']
+        """
+        related = [user_id]
+        try:
+            # 方法1：通过 user_identities 表找到 canonical uid，再查所有平台 ID
+            row = await self.fetchone(
+                "SELECT uid FROM user_identities WHERE platform_id=? OR platform_id=?",
+                (user_id, f"qq:{user_id}"),
+            )
+            if row:
+                cuid = row[0]
+                rows = await self.fetch(
+                    "SELECT platform_id FROM user_identities WHERE uid=?", (cuid,)
+                )
+                for r in rows:
+                    pid = r[0]
+                    if pid and pid not in related:
+                        # 去掉 qq: 前缀
+                        clean = pid.replace("qq:", "", 1) if pid.startswith("qq:") else pid
+                        if clean not in related:
+                            related.append(clean)
+                # 同时也查 canonical_users 的 primary_name
+                crow = await self.fetchone(
+                    "SELECT primary_name FROM canonical_users WHERE uid=?", (cuid,)
+                )
+                if crow and crow[0] and crow[0] not in related:
+                    related.append(crow[0])
+        except Exception:
+            pass
+
+        # 方法2：直接查 user_registry 的别名
+        try:
+            for alias_key in [user_id, f"qq:{user_id}"]:
+                row = await self.fetchone(
+                    "SELECT user_name FROM user_registry WHERE user_id=?", (alias_key,)
+                )
+                if row and row[0] and row[0] not in related:
+                    related.append(row[0])
+        except Exception:
+            pass
+
+        return related
         """获取所有有活跃原子的用户"""
         rows = await self.fetch(
             "SELECT DISTINCT user_id FROM memory_atoms WHERE status = 'active'"
@@ -615,7 +668,7 @@ class AtomStore(BaseDbStore, MemoryStore):
             atom_id=d["id"],
             user_id=d["user_id"],
             diary_date=d["diary_date"],
-            atom_type=AtomType(d["atom_type"]),
+            atom_type=AtomType(d["atom_type"]) if d["atom_type"] is not None else AtomType.UNKNOWN,
             content=d["content"],
             entities=json.loads(d["entities"]) if isinstance(d["entities"], str) else (d["entities"] or []),
             importance=d["importance"],
@@ -624,13 +677,13 @@ class AtomStore(BaseDbStore, MemoryStore):
             created_at=d["created_at"],
             last_accessed_at=d["last_accessed_at"],
             ttl_days=d["ttl_days"],
-            status=AtomStatus(d["status"]),
+            status=AtomStatus(d["status"]) if d["status"] is not None else AtomStatus.ACTIVE,
             session_id=d["session_id"],
             diary_ref=d["diary_ref"],
             expires_at=d["expires_at"] or 0.0,
             decay_type=self._parse_decay_type(d["decay_type"]),
             diary_snippet=d["diary_snippet"] or "",
-            metadata=json.loads(d["metadata"]) if isinstance(d["metadata"], str) and d["metadata"] else {},
+            metadata=self._safe_json_loads(d.get("metadata")),
         )
 
     @staticmethod
@@ -669,3 +722,17 @@ class AtomStore(BaseDbStore, MemoryStore):
                 if dt.value in str(raw).lower():
                     return dt
             return DecayType.EXPONENTIAL
+
+    @staticmethod
+    def _safe_json_loads(raw) -> dict:
+        if not raw:
+            return {}
+        if not isinstance(raw, str):
+            return {}
+        raw = raw.strip()
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}

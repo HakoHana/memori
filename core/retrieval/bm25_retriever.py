@@ -1,18 +1,22 @@
-"""文档路：FTS5 全文检索（替代原 LIKE %kw% 全表扫描）"""
+"""文档路：FTS5（英文）+ LIKE（中文）双模检索"""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ...models.memory_atom import MemoryAtom
 from ...storage.atom_store import AtomStore
+from ..logger import logger
 
 
 class BM25Retriever:
     """文档路检索器
 
-    利用 memory_atoms_fts (FTS5) 做关键词检索，
-    按 BM25 × 重要度 加权排序。
+    FTS5 unicode61 不切分连续汉字（"宠物狗"是一个 token），
+    所以中文关键词走 LIKE %kw%，英文/数字走 FTS5 MATCH。
+
+    两路结果按重要度融合排序。
     """
 
     def __init__(self, atom_store: AtomStore):
@@ -24,7 +28,7 @@ class BM25Retriever:
         user_ids: list[str],
         k: int = 5,
     ) -> list[MemoryAtom]:
-        """FTS5 全文检索
+        """混合检索
 
         Args:
             keywords: 关键词列表（已分词去停用词）
@@ -32,34 +36,59 @@ class BM25Retriever:
             k: 返回 top N
 
         Returns:
-            按相关度降序排列的 MemoryAtom 列表
+            按重要度降序排列的 MemoryAtom 列表
         """
-        if not keywords:
+        if not keywords or not user_ids:
             return []
 
-        # 构建 FTS5 query：中文词用短语 `"词"`，英文/数字直接用
-        fts_terms = []
-        for kw in keywords:
-            if not kw or len(kw) < 1:
-                continue
-            # 纯英文/数字：直接作为 token
-            if kw.isascii() and kw.isalnum():
-                fts_terms.append(kw)
-            else:
-                # 中文/混合：短语精确匹配
-                fts_terms.append(f'"{kw}"')
+        # 分拣：英文/数字 → FTS5，中文 → LIKE
+        ascii_kws = [kw for kw in keywords if kw.isascii() and len(kw) >= 2]
+        cjk_kws = [kw for kw in keywords if not kw.isascii() and len(kw) >= 2]
 
-        if not fts_terms:
+        results: dict[int, MemoryAtom] = {}
+        scores: dict[int, float] = {}
+
+        # ── 英文/数字路：FTS5 ──
+        if ascii_kws:
+            try:
+                fts_query = " OR ".join(ascii_kws)
+                uid = user_ids[0]
+                extra = user_ids[1:] if len(user_ids) > 1 else None
+                fts_atoms = await self.atom_store.search_fts(
+                    query=fts_query, user_id=uid, k=k * 2, extra_user_ids=extra,
+                )
+                for a in fts_atoms:
+                    results[a.atom_id] = a
+                    scores[a.atom_id] = a.importance
+            except Exception as e:
+                logger.debug(f"[BM25] FTS5 检索异常: {e}")
+
+        # ── 中文路：LIKE %kw% ──
+        if cjk_kws:
+            try:
+                for kw in cjk_kws:
+                    for uid in user_ids:
+                        rows = await self.atom_store.fetch(
+                            """SELECT * FROM memory_atoms
+                               WHERE user_id=? AND status='active'
+                                 AND content LIKE ?
+                               ORDER BY importance DESC LIMIT ?""",
+                            (uid, f"%{kw}%", k * 2),
+                        )
+                        for r in rows:
+                            atom = self.atom_store._row_to_atom(r)
+                            results[atom.atom_id] = atom
+                            scores[atom.atom_id] = scores.get(atom.atom_id, 0.0) + 0.3
+            except Exception as e:
+                logger.debug(f"[BM25] LIKE 检索异常: {e}")
+
+        if not results:
             return []
 
-        fts_query = " OR ".join(fts_terms)
-
-        # 复用 atom_store 已有的 search_fts（含权限过滤 + 重要度加权）
-        uid = user_ids[0] if user_ids else ""
-        extra = user_ids[1:] if len(user_ids) > 1 else None
-        return await self.atom_store.search_fts(
-            query=fts_query,
-            user_id=uid,
-            k=k,
-            extra_user_ids=extra,
+        # 综合排序：重要度 × 0.7 + 关键词命中数 × 0.3
+        sorted_atoms = sorted(
+            results.values(),
+            key=lambda a: (a.importance * 0.7 + min(scores.get(a.atom_id, 0), 1.0) * 0.3, a.importance),
+            reverse=True,
         )
+        return sorted_atoms[:k]

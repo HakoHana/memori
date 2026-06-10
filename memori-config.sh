@@ -26,6 +26,6 @@ else
     done
 fi
 
-# 打开配置页面
-xdg-open "http://localhost:$PORT/config"
-echo "🌐 配置页面已打开"
+# 打开 Dashboard（左侧栏含系统配置入口）
+xdg-open "http://localhost:$PORT/webui/dashboard/index.html"
+echo "🌐 memori Dashboard 已打开"

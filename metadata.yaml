@@ -1,0 +1,12 @@
+name: memori
+desc: 长期记忆插件 — 基于 memori 内核
+author: HakoHana
+version: 0.1.0
+repo: https://github.com/HakoHana/memori
+tags:
+  - memory
+  - diary
+  - long-term
+platforms:
+  - all
+astrbot_version: ">=3.0.0"

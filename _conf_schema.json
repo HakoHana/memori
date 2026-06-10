@@ -1,0 +1,26 @@
+{
+  "bot_name": {
+    "type": "string",
+    "description": "Bot 显示名",
+    "default": "Hana",
+    "hint": "在对话和记忆中使用的名称"
+  },
+  "recall_count": {
+    "type": "number",
+    "description": "每次召回记忆条数",
+    "default": 5,
+    "hint": "每次消息处理时最多召回多少条记忆"
+  },
+  "trigger_msg_count": {
+    "type": "number",
+    "description": "多少条消息后自动整理记忆",
+    "default": 10,
+    "hint": "达到此消息数后触发 LLM 整理记忆"
+  },
+  "trigger_time_minutes": {
+    "type": "number",
+    "description": "多少分钟无消息后自动整理",
+    "default": 360,
+    "hint": "距离上次整理超过此时间则触发"
+  }
+}

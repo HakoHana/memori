@@ -1,7 +1,5 @@
-# Memoria 核心依赖
-# 安装方式：
-#   pip install .                   → 内核
-#   pip install ".[server]"         → 内核 + HTTP 服务
+# memori 核心依赖（在 pyproject.toml 中声明）
+# pip install . 即可安装内核
 #
-# 依赖声明在 pyproject.toml 的 [project.dependencies] 中。
-# 此文件仅作参考。
+# AstrBot 插件额外需：
+#   astrbot (框架自带)

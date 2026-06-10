@@ -372,52 +372,24 @@
     if (name === "settings") { loadSettingsPage(); }
   }
 
-  var _settingsCache = null;
-  var _providersCache = null;
-  var _settingsLoading = false;
-
-  async function preloadSettings() {
-    try {
-      var resp = await fetch("/api/v1/config");
-      var data = await resp.json();
-      if (data.ok) _settingsCache = data.groups;
-      var r2 = await fetch("/api/v1/providers");
-      var d2 = await r2.json();
-      if (d2.ok) _providersCache = d2.providers || [];
-    } catch (_) {}
-  }
-
   function loadSettingsPage() {
     var body = document.getElementById("settings-body");
     if (!body) return;
-    if (_settingsLoading) return;
-    _settingsLoading = true;
-
-    if (!_settingsCache) {
-      body.innerHTML = '<p style="padding:40px;text-align:center;color:#999">⏳ 正在加载...</p>';
-      preloadSettings().then(function() { _settingsLoading = false; loadSettingsPage(); });
+    var cfg = window.__MEMORI_CONFIG__;
+    if (!cfg || !cfg.groups) {
+      body.innerHTML = '<p style="color:red;padding:40px;text-align:center">配置数据未加载</p>';
       return;
     }
-
-    body.innerHTML = buildSettingsHTML(_settingsCache);
-    renderProvsForSettings();
-    _settingsLoading = false;
-  }
-
-  function renderProvsForSettings() {
-    var tb = document.getElementById("settings-prov-tbody");
-    if (!tb) return;
-    tb.innerHTML = "";
-    for (var i = 0; i < (_providersCache || []).length; i++) {
-      var p = _providersCache[i];
-      var tr = document.createElement("tr");
-      tr.innerHTML = '<td><input class="pv_n" value="' + esc(p.name||"") + '" placeholder="my-llm"></td>' +
-        '<td><input class="pv_b" value="' + esc(p.api_base||"") + '" placeholder="https://api.openai.com/v1"></td>' +
-        '<td><input class="pv_k" type="password" value="' + esc(p.api_key||"") + '"></td>' +
-        '<td><input class="pv_m" value="' + esc(p.model||"") + '" placeholder="gpt-4o"></td>' +
-        '<td><button class="btn-sm-text" onclick="this.closest(\'tr\').remove()">✕</button></td>';
-      tb.appendChild(tr);
-    }
+    var html = buildSettingsHTML(cfg.groups);
+    // 模型提供商部分
+    html += '<div class="card"><h2> 模型提供商</h2>';
+    html += '<p style="color:#888;font-size:0.85em;margin-bottom:12px">在「基础」中选用的 ID 需与此处一致</p>';
+    html += '<table class="settings-prov-table"><thead><tr>';
+    html += '<th>ID</th><th>API 地址</th><th>API Key</th><th>模型</th><th></th>';
+    html += '</tr></thead><tbody id="settings-prov-tbody"></tbody></table>';
+    html += '<button class="btn btn-sm btn-secondary" onclick="addProvRow()" style="margin-top:8px">+ 添加</button></div>';
+    html += '<button class="btn btn-primary" onclick="saveAllSettings()" style="margin-top:16px;padding:10px 32px;border:none;border-radius:8px;background:#06c;color:#fff;font-size:1em;cursor:pointer;width:100%"> 保存全部</button>';
+    body.innerHTML = html;
   }
 
   function buildSettingsHTML(groups) {
@@ -466,6 +438,8 @@
     for (var p of data.providers || []) addProvRow(p);
   }
   function addProvRow(p) {
+    if (!p) p = {};
+    if (typeof p === "undefined") p = {};
     var tb = document.getElementById("settings-prov-tbody");
     var tr = document.createElement("tr");
     tr.innerHTML = '<td><input class="pv_n" value="' + esc(p.name || "") + '" placeholder="my-llm"></td>' +
@@ -1619,7 +1593,6 @@
       applyTheme(readTheme());
       listenBridgeTheme();
 
-      preloadSettings();
       initSidebar();
       initMemoryPage();
       initRecallPage();

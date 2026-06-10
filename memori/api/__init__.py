@@ -219,9 +219,36 @@ def create_app(
 
     app.include_router(router, prefix="/api")
 
-    # WebUI 静态文件
+    # WebUI 静态文件（JS/CSS 用 StaticFiles，HTML 手动注入配置数据）
     _webui_path = Path(__file__).parent.parent.parent / "webui"
     if _webui_path.exists():
+        from fastapi.responses import FileResponse
+
+        @app.get("/webui/dashboard/index.html")
+        async def dashboard_page(core: MemoryCore = Depends(get_core)):
+            import json
+            from .routes import _CONFIG_META
+            # 构建配置数据
+            groups = {}
+            for key, meta in _CONFIG_META.items():
+                group = meta["group"]
+                if group not in groups:
+                    groups[group] = []
+                if key.startswith("archive_"):
+                    sub_key = key.replace("archive_", "")
+                    archive_cfg = core.config.get("archive", {})
+                    current = archive_cfg.get(sub_key, meta["default"])
+                else:
+                    current = core.config.get(key, meta["default"])
+                groups[group].append({"key": key, "value": current, **meta})
+            config_json = json.dumps({"groups": groups}, ensure_ascii=False)
+
+            html = (_webui_path / "dashboard" / "index.html").read_text(encoding="utf-8")
+            # 在 </head> 前注入配置数据
+            script = f'<script>window.__MEMORI_CONFIG__ = {config_json};</script>'
+            html = html.replace("</head>", script + "</head>")
+            return HTMLResponse(content=html)
+
         app.mount("/webui", StaticFiles(directory=str(_webui_path)), name="webui")
 
     _ui_path = Path(__file__).parent / "webui_config.html"

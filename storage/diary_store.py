@@ -189,14 +189,26 @@ class DiaryStore(BaseDbStore):
         return [r[0] for r in rows]
 
     async def upsert(self, user_id: str, date_str: str, content: str) -> bool:
-        """插入日记 — 每次都新建条目（不按日期去重）"""
+        """更新或插入日记 — 已有记录时只改 content + updated_at，保留 created_at"""
         import time
         now = time.time()
         async with self._connect() as db:
-            await db.execute(
-                "INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (user_id, date_str, content, now, now),
+            row = await db.execute_fetchall(
+                "SELECT id FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+                (user_id, date_str),
             )
+            if row:
+                # 已有记录 → 只更新 content 和时间戳
+                await db.execute(
+                    "UPDATE diary_entries SET content=?, updated_at=? WHERE id=?",
+                    (content, now, row[0][0]),
+                )
+            else:
+                # 新建记录 → 设置完整时间戳
+                await db.execute(
+                    "INSERT INTO diary_entries(user_id,date,content,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (user_id, date_str, content, now, now),
+                )
             await db.commit()
             return True
 

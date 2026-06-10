@@ -2,9 +2,12 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+dist/
+build/
 
-# 数据目录（运行时生成）
+# 数据
 data/
+*.db
 
 # IDE
 .vscode/
@@ -13,5 +16,3 @@ data/
 # OS
 .DS_Store
 Thumbs.db
-架构对比分析.md
-架构对比分析.md

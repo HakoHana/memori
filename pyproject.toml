@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "memoria"
+version = "0.1.0"
+description = "长期记忆内核 — 纯净的 Python 包，零框架依赖"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "HakoHana"}]
+requires-python = ">=3.11"
+dependencies = [
+    "aiosqlite>=0.19.0",
+    "cachetools>=7.1.0",
+    "jieba>=0.42.1",
+]
+keywords = ["memory", "llm", "agent", "knowledge-graph", "sqlite"]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+]
+
+[project.urls]
+Source = "https://github.com/HakoHana/memoria"
+
+[tool.setuptools.packages.find]
+include = ["memoria", "memoria.*"]

@@ -1,9 +1,9 @@
-"""Memoria HTTP 服务入口 — python -m memoria
+"""Memori HTTP 服务入口 — python -m memori
 
 用法:
-    python -m memoria                          # 默认 0.0.0.0:8765
-    python -m memoria --port 8080 --host 127.0.0.1
-    python -m memoria --data-dir /path/to/data
+    python -m memori                          # 默认 0.0.0.0:8765
+    python -m memori --port 8080 --host 127.0.0.1
+    python -m memori --data-dir /path/to/data
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def main():
     print()
 
     uvicorn.run(
-        "memoria.api:create_app",
+        "memori.api:create_app",
         host=args.host,
         port=args.port,
         reload=args.reload,

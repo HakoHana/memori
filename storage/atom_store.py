@@ -601,7 +601,7 @@ class AtomStore(BaseDbStore, MemoryStore):
             )
             await self.execute(
                 "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen,last_seen,verified,source) VALUES (?,?,?,?,?,?,1,'system')",
-                (f"bot:{bot_name}", "bot_hana", "memoria", bot_name, now, now),
+                (f"bot:{bot_name}", "bot_hana", "memori", bot_name, now, now),
             )
 
     async def get_persona_summary(self, uid: str) -> str:

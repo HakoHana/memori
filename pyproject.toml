@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "memoria"
+name = "memori"
 version = "0.1.0"
 description = "长期记忆内核 — 纯净的 Python 包，零框架依赖"
 readme = "README.md"
@@ -24,4 +24,4 @@ server = [
 ]
 
 [project.urls]
-Source = "https://github.com/HakoHana/memoria"
+Source = "https://github.com/HakoHana/memori"

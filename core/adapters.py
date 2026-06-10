@@ -1,6 +1,6 @@
 """抽象层 — 纯接口定义，零框架依赖
 
-任何 Agent/框架接入 memoria 只需实现 LLMProvider、ContextProvider 两个接口。
+任何 Agent/框架接入 memori 只需实现 LLMProvider、ContextProvider 两个接口。
 
 标准调用链:
     外部事件 → 框架适配层提取 MemoriaEvent
@@ -126,7 +126,7 @@ class ContextProvider(ABC):
 class MemoryStore(ABC):
     """存储抽象 — 搜索接口，供检索系统扩展
 
-    当前由 memoria.storage.atom_store.AtomStore 实现。
+    当前由 memori.storage.atom_store.AtomStore 实现。
     """
 
     @abstractmethod

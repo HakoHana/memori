@@ -4,8 +4,8 @@
 通过 adapters 模块的接口接入各种 Agent/框架。
 
 快速开始:
-    from memoria import MemoryCore
-    from memoria.core.adapters import LLMProvider, ContextProvider
+    from memori import MemoryCore
+    from memori.core.adapters import LLMProvider, ContextProvider
 
     class MyLLM(LLMProvider): ...
     class MyContext(ContextProvider): ...

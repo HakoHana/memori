@@ -7,7 +7,7 @@
 import logging
 import sys
 
-logger = logging.getLogger("memoria")
+logger = logging.getLogger("memori")
 logger.setLevel(logging.DEBUG)
 
 # 确保有 handler 输出到 stderr

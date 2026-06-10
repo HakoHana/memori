@@ -18,16 +18,16 @@
 ### 安装
 
 ```bash
-pip install memoria
+pip install memori
 # 或 htt 服务版
-pip install "memoria[server]"
+pip install "memori[server]"
 ```
 
 ### 接入任意框架
 
 ```python
-from memoria import MemoryCore
-from memoria.core.adapters import LLMProvider, ContextProvider
+from memori import MemoryCore
+from memori.core.adapters import LLMProvider, ContextProvider
 
 class MyLLM(LLMProvider):
     async def chat(self, system_prompt: str, user_prompt: str) -> str:
@@ -44,7 +44,7 @@ core = MemoryCore(
     config={"bot_name": "Hana"},
     llm_provider=MyLLM(),
     context_provider=MyCtx(),
-    data_dir="./memoria_data",
+    data_dir="./memori_data",
 )
 await core.initialize()
 await core.process_message(user_id="user1", message_text="今天测试辛苦了")
@@ -53,7 +53,7 @@ await core.process_message(user_id="user1", message_text="今天测试辛苦了"
 ### 独立 HTTP 服务
 
 ```bash
-python -m memoria --port 8765
+python -m memori --port 8765
 ```
 
 ```http
@@ -85,11 +85,11 @@ API 文档：`http://localhost:8765/docs`
 
 | 层 | 说明 |
 |----|------|
-| `memoria/core/` | 业务逻辑：MemoryCore、Retriever、WarmProcessor、Capturer... |
-| `memoria/storage/` | SQLite 存储：日记、原子、图谱、会话、画像 |
-| `memoria/retrieval/` | 双路检索：BM25 + GraphEntity + RRF |
-| `memoria/models/` | 数据模型：MemoryAtom、GraphNode |
-| `memoria/api/` | FastAPI HTTP 服务（可选） |
+| `memori/core/` | 业务逻辑：MemoryCore、Retriever、WarmProcessor、Capturer... |
+| `memori/storage/` | SQLite 存储：日记、原子、图谱、会话、画像 |
+| `memori/retrieval/` | 双路检索：BM25 + GraphEntity + RRF |
+| `memori/models/` | 数据模型：MemoryAtom、GraphNode |
+| `memori/api/` | FastAPI HTTP 服务（可选） |
 
 ## 依赖
 

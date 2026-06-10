@@ -68,7 +68,7 @@ def create_app(
                 config=config or {},
                 llm_provider=SimpleProvider(),
                 context_provider=SimpleContext(),
-                data_dir=data_dir or str(Path.cwd() / "data" / "memoria"),
+                data_dir=data_dir or str(Path.cwd() / "data" / "memori"),
                 **kwargs,
             )
             app.state.memory_core = core

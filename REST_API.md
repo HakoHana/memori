@@ -1,6 +1,6 @@
 # Memoria REST API 规划 v0.1
 
-> 当 memoria 作为独立 HTTP 服务运行时提供的接口规划。
+> 当 memori 作为独立 HTTP 服务运行时提供的接口规划。
 > 当前阶段通过 AstrBot 插件桥接，此文档为未来独立部署的蓝图。
 
 ---

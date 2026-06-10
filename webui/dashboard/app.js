@@ -372,14 +372,52 @@
     if (name === "settings") { loadSettingsPage(); }
   }
 
-  async function loadSettingsPage() {
+  var _settingsCache = null;
+  var _providersCache = null;
+  var _settingsLoading = false;
+
+  async function preloadSettings() {
+    try {
+      var resp = await fetch("/api/v1/config");
+      var data = await resp.json();
+      if (data.ok) _settingsCache = data.groups;
+      var r2 = await fetch("/api/v1/providers");
+      var d2 = await r2.json();
+      if (d2.ok) _providersCache = d2.providers || [];
+    } catch (_) {}
+  }
+
+  function loadSettingsPage() {
     var body = document.getElementById("settings-body");
-    if (!body) { alert("settings-body not found"); return; }
-    // === 测试 1: 纯文本能否显示 ===
-    body.textContent = "如果能看到这行字，说明 settings-body 可以显示内容";
-    await new Promise(function(r) { setTimeout(r, 3000); });
-    // === 测试 2: innerHTML 能否显示 ===
-    body.innerHTML = '<div style="background:#fff;padding:20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1)"><h2 style="margin:0 0 10px;color:#06c">简易卡片</h2><p style="color:#333">如果能看到卡片，说明 CSS 没问题</p></div>';
+    if (!body) return;
+    if (_settingsLoading) return;
+    _settingsLoading = true;
+
+    if (!_settingsCache) {
+      body.innerHTML = '<p style="padding:40px;text-align:center;color:#999">⏳ 正在加载...</p>';
+      preloadSettings().then(function() { _settingsLoading = false; loadSettingsPage(); });
+      return;
+    }
+
+    body.innerHTML = buildSettingsHTML(_settingsCache);
+    renderProvsForSettings();
+    _settingsLoading = false;
+  }
+
+  function renderProvsForSettings() {
+    var tb = document.getElementById("settings-prov-tbody");
+    if (!tb) return;
+    tb.innerHTML = "";
+    for (var i = 0; i < (_providersCache || []).length; i++) {
+      var p = _providersCache[i];
+      var tr = document.createElement("tr");
+      tr.innerHTML = '<td><input class="pv_n" value="' + esc(p.name||"") + '" placeholder="my-llm"></td>' +
+        '<td><input class="pv_b" value="' + esc(p.api_base||"") + '" placeholder="https://api.openai.com/v1"></td>' +
+        '<td><input class="pv_k" type="password" value="' + esc(p.api_key||"") + '"></td>' +
+        '<td><input class="pv_m" value="' + esc(p.model||"") + '" placeholder="gpt-4o"></td>' +
+        '<td><button class="btn-sm-text" onclick="this.closest(\'tr\').remove()">✕</button></td>';
+      tb.appendChild(tr);
+    }
   }
 
   function buildSettingsHTML(groups) {
@@ -1581,6 +1619,7 @@
       applyTheme(readTheme());
       listenBridgeTheme();
 
+      preloadSettings();
       initSidebar();
       initMemoryPage();
       initRecallPage();

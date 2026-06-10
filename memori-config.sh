@@ -10,11 +10,17 @@ if curl -sf http://localhost:$PORT/health > /dev/null 2>&1; then
 else
     echo "🚀 启动 memori..."
     cd "$MEMORI_DIR"
-    python -m memori --port $PORT &
-    # 等待就绪（最多等 10 秒）
-    for i in $(seq 1 10); do
+    nohup python -m memori --port $PORT > /dev/null 2>&1 &
+    disown
+    # 等待就绪（最多等 15 秒）
+    for i in $(seq 1 15); do
         if curl -sf http://localhost:$PORT/health > /dev/null 2>&1; then
+            echo "✅ memori 已就绪"
             break
+        fi
+        if [ $i -eq 15 ]; then
+            echo "❌ memori 启动超时，请检查日志"
+            exit 1
         fi
         sleep 1
     done

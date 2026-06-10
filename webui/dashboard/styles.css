@@ -2402,6 +2402,14 @@ body {
 /* ══════════════════════════════════════
    Settings / Config Page
    ══════════════════════════════════════ */
+#page-settings .card {
+  display: block;
+  margin-bottom: 16px;
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-light, #eee);
+  border-radius: 12px;
+  padding: 20px;
+}
 #page-settings .card h2 {
   margin-top: 0;
   margin-bottom: 16px;
@@ -2409,6 +2417,11 @@ body {
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-light);
   padding-bottom: 10px;
+}
+#page-settings .page-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
 }
 #page-settings .field {
   display: flex;

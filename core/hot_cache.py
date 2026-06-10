@@ -6,6 +6,8 @@ import time
 from collections import deque
 from typing import Any
 
+from .context_formatter import format_msg
+
 
 class HotMessageCache:
     """每个用户的热消息缓存
@@ -57,21 +59,23 @@ class HotMessageCache:
     def format_recent_context(
         self, user_id: str, limit: int = 20, bot_name: str = "我"
     ) -> str:
-        """格式化为对话文本（与 ConversationStore.get_recent_context 同款格式）"""
+        """格式化为带时间戳的对话文本"""
         messages = self.get_recent(user_id, limit)
         if not messages:
             return ""
+        now = time.time()
         lines = []
         for m in messages:
-            role = m["role"]
+            ts = m.get("timestamp", now)
             content = m["content"]
+            role = m["role"]
             name = m.get("sender_name", "")
             sid = m.get("sender_id", "")
             if role == "user":
                 display = name if name else (sid or "用户")
-                lines.append(f"[{display}]: {content}")
             else:
-                lines.append(f"[Bot: {bot_name}]: {content}")
+                display = f"Bot: {bot_name}"
+            lines.append(format_msg(ts, display, content, now))
         return "\n".join(lines)
 
     # ── 管理 ──

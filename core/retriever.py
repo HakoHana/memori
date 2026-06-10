@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import jieba
@@ -162,6 +163,8 @@ class Retriever:
 
         返回 RecallResult，包含格式化的文本 + 原子列表 + 画像
         """
+        from .context_formatter import format_date_tag
+
         k = k or self.recall_count
         atoms = await self.recall(user_id, query, k)
         persona = await self.persona_store.read(user_id)
@@ -172,17 +175,19 @@ class Retriever:
 
         # 组装文本
         lines = []
+        now = time.time()
 
         # 画像部分
         if persona:
             lines.append(f"【关于你】\n{persona[:300]}")
 
-        # 原子部分
+        # 原子部分 — 带时间标签
         if atoms:
             parts = []
             for a in atoms:
-                date_part = f" ({a.diary_date})" if a.diary_date else ""
-                parts.append(f"- [{a.atom_type.value}]{date_part} {a.content[:200]}")
+                tag = format_date_tag(a.diary_date, now)
+                date_tag = f" [{tag}]" if tag else ""
+                parts.append(f"- [{a.atom_type.value}]{date_tag} {a.content[:200]}")
             if parts:
                 lines.append("【我记忆中最近的事】")
                 lines.extend(parts)

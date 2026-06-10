@@ -71,26 +71,32 @@ class ConversationStore(BaseDbStore):
                                   bot_name: str = "我") -> str:
         """获取最近的对话上下文（用于写日记/判断）
 
-        格式：用户消息显示 sender_name，bot 消息显示 bot_name
+        格式：[时间] 昵称: 消息，时间按距今天数自适应：
+        - 当天 → [HH:MM]
+        - 跨天但≤7天 → [MM-DD HH:MM]
+        - >7天 → [MM-DD]
         """
+        from ..core.context_formatter import format_msg
         async with self._connect() as db:
             rows = await db.execute_fetchall(
-                "SELECT role, content, sender_name, sender_id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
+                "SELECT role, content, sender_name, sender_id, timestamp FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
                 (session_id, limit),
             )
         if not rows:
             return ""
+        now = time.time()
         lines = []
         for r in reversed(rows):
             role = r[0]
             content = r[1]
             name = r[2] or ""  # sender_name
             sid = r[3] or ""   # sender_id
+            ts = r[4] or now   # timestamp
             if role == "user":
                 display = name if name else (sid or "用户")
-                lines.append(f"[{display}]: {content}")
             else:
-                lines.append(f"[Bot: {bot_name}]: {content}")
+                display = f"Bot: {bot_name}"
+            lines.append(format_msg(ts, display, content, now))
         return "\n".join(lines)
 
     async def get_session_id(self, event) -> str:

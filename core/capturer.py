@@ -272,11 +272,15 @@ class Capturer:
     def _detect_speaker_count(text: str) -> int:
         """从对话文本中检测说话人数（去重后的非 Bot 说话者数量）
 
-        格式：[昵称]: 消息 或 [昵称 | ID: xxx | 时间] 消息
+        支持格式：
+        - [HH:MM] 昵称: 消息
+        - [MM-DD HH:MM] 昵称: 消息
+        - [MM-DD] 昵称: 消息
+        - [昵称]: 消息（旧格式兜底）
         """
         import re
         speakers = set()
-        for m in re.finditer(r'^\[([^\]|:]+)(?:\s*[|:]\s*|:\s*)', text, re.MULTILINE):
+        for m in re.finditer(r'^\[[^\]]+\] (.+?):\s', text, re.MULTILINE):
             name = m.group(1).strip()
             if not name.lower().startswith("bot"):
                 speakers.add(name)

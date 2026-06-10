@@ -9,7 +9,7 @@ function buildHTML(groups) {
   var html = "";
   for (var name in groups) {
     var fields = groups[name];
-    html += '<div class="card" style="border:2px solid #e33;background:#fff;color:#333;margin-bottom:16px"><h2 style="color:#06c;border-bottom:1px solid #eee;padding-bottom:10px;margin:0 0 16px 0">' + esc(name) + '</h2>';
+    html += '<div class="card"><h2>' + esc(name) + '</h2>';
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       var id = "cfg_" + f.key;
@@ -68,16 +68,16 @@ function save() {
 window.renderSettingsPage = {
   render: function() {
     var body = document.getElementById("settings-body");
-    if (!body) { console.error("no body"); return; }
+    if (!body) {  return; }
     var cfg = window.__MEMORI_CONFIG__;
-    console.log("CONFIG:", cfg ? "loaded" : "null");
+    
     if (!cfg || !cfg.groups) {
       body.innerHTML = '<p style="padding:40px;text-align:center;color:#999">NONE</p>';
       return;
     }
-    var keys = Object.keys(cfg.groups);
-    console.log("GROUPS:", keys.join(", "));
-    body.innerHTML = '<p style="padding:10px;color:#090">GOT ' + keys.length + ' groups</p>' + buildHTML(cfg.groups);
+    
+    
+    body.innerHTML = buildHTML(cfg.groups);
     body.innerHTML += '<div id="settings-toast" style="display:none;position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#1d1d1f;color:#fff;padding:10px 24px;border-radius:24px;font-size:14px"></div>';
   },
   save: save

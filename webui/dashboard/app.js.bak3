@@ -368,7 +368,8 @@
     if (name === "graph") { fetchGraphStats(); if (window.ensureGraphScene) window.ensureGraphScene(); }
     if (name === "memory" || name === "memories") { fetchMemories(); }
     if (name === "persons") { fetchPersonas(); }
-    if (name === "settings") { renderSettingsPage.render(); }
+    if (name === "system") { fetchSystemOverview(); }
+    if (name === "settings") { loadSettingsPage(); }
   }
 
   function initSidebar() {

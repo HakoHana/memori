@@ -1,0 +1,380 @@
+"""FastAPI 路由 — 所有 RESTful 端点"""
+
+from __future__ import annotations
+
+import json
+import time
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from ..core.memory_core import MemoryCore
+from .deps import get_core
+from .schemas import *
+
+router = APIRouter()
+
+
+# ═══════════════════════════════════════════════════════════
+#  事件处理
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/v1/events", response_model=EventResponse)
+async def process_event(body: EventRequest, core: MemoryCore = Depends(get_core)):
+    """提交消息 → 召回记忆 → 注入上下文"""
+    modified = await core.process_message(
+        user_id=body.user_id,
+        message_text=body.text,
+        sender_name=body.sender_name,
+        system_prompt=body.system_prompt,
+    )
+
+    # 后台触发整理（不阻塞响应）
+    await core.trigger_capture(body.user_id, body.text)
+
+    # 召回结果
+    recall = await core.retriever.get_context_memories(body.user_id, body.text)
+
+    return EventResponse(
+        modified_text=modified,
+        injected_count=len(recall.atoms),
+        recalled_count=len(recall.atoms),
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+#  记忆检索
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/memories", response_model=MemorySearchResult)
+async def search_memories(
+    q: str = Query("", description="搜索关键词"),
+    uid: str = Query("", description="用户 ID"),
+    k: int = Query(5, ge=1, le=50),
+    core: MemoryCore = Depends(get_core),
+):
+    """按关键词检索记忆"""
+    if not q or not uid:
+        return MemorySearchResult(results=[], total=0)
+
+    atoms = await core.retriever.recall(uid, q, k)
+    results = [
+        MemoryAtomOut(id=a.atom_id, content=a.content, atom_type=a.atom_type.value,
+                      importance=a.importance, diary_date=a.diary_date)
+        for a in atoms
+    ]
+    return MemorySearchResult(results=results, total=len(results))
+
+
+@router.get("/v1/memories/{memory_id}", response_model=dict)
+async def get_memory_detail(memory_id: int, core: MemoryCore = Depends(get_core)):
+    """获取单条记忆详情"""
+    # 先查 diary
+    row = await core.atom_store.fetchone(
+        "SELECT * FROM diary_entries WHERE id=?", (memory_id,)
+    )
+    if not row:
+        raise HTTPException(404, "记忆不存在")
+
+    columns = ["id", "uid", "user_id", "date", "timestamp", "content", "importance",
+               "mood", "topics", "sentiment", "fact_extracted", "fact_retry_count",
+               "archived", "correction", "created_at"]
+    diary = dict(zip(columns, row))
+
+    # 关联原子
+    atoms = await core.atom_store.fetch(
+        "SELECT id, content, atom_type, importance FROM memory_atoms WHERE diary_id=? AND status='active' ORDER BY importance DESC",
+        (memory_id,),
+    )
+    diary["atoms"] = [
+        {"id": a[0], "content": a[1], "type": a[2], "importance": a[3]}
+        for a in atoms
+    ]
+    return diary
+
+
+@router.put("/v1/memories/{memory_id}")
+async def update_memory(memory_id: int, body: MemoryUpdateRequest,
+                        core: MemoryCore = Depends(get_core)):
+    """更新记忆"""
+    updates = {k: v for k, v in body.model_dump(exclude_none=True).items()
+               if k in ("content", "importance", "status")}
+    if not updates:
+        raise HTTPException(400, "没有可更新的字段")
+    updates["updated_at"] = time.time()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    vals = list(updates.values()) + [memory_id]
+    await core.atom_store.execute(f"UPDATE diary_entries SET {sets} WHERE id=?", vals)
+    return {"ok": True}
+
+
+@router.delete("/v1/memories/{memory_id}")
+async def delete_memory(memory_id: int, core: MemoryCore = Depends(get_core)):
+    """删除记忆"""
+    # 清理独占原子
+    exclusive = await core.atom_store.fetch("""
+        SELECT ma.id FROM memory_atoms ma
+        WHERE ma.diary_id=? AND ma.status='active'
+        AND (SELECT COUNT(*) FROM memory_atoms sub
+             WHERE sub.content=ma.content AND sub.user_id=ma.user_id
+             AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
+    """, (memory_id,))
+    eids = [r[0] for r in exclusive]
+    if eids:
+        ph = ",".join("?" * len(eids))
+        await core.atom_store.execute(
+            f"UPDATE memory_atoms SET status='forgotten' WHERE id IN ({ph})", eids
+        )
+    await core.atom_store.execute("DELETE FROM diary_entries WHERE id=?", (memory_id,))
+    return {"ok": True, "cleaned_atoms": len(eids)}
+
+
+@router.get("/v1/memories/timeline")
+async def get_timeline(
+    uid: str = Query(..., description="用户 ID"),
+    year: str = Query("", description="年份过滤"),
+    month: str = Query("", description="月份过滤"),
+    core: MemoryCore = Depends(get_core),
+):
+    """按时间线浏览记忆日期"""
+    if year and month:
+        ym = f"{year}-{int(month):02d}"
+        rows = await core.atom_store.fetch(
+            "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
+            (uid, f"{ym}%"),
+        )
+    elif year:
+        rows = await core.atom_store.fetch(
+            "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
+            (uid, f"{year}%"),
+        )
+    else:
+        rows = await core.atom_store.fetch(
+            "SELECT DISTINCT date FROM diary_entries WHERE user_id=? ORDER BY date DESC LIMIT 100",
+            (uid,),
+        )
+    return {"ok": True, "dates": [r[0] for r in rows]}
+
+
+# ═══════════════════════════════════════════════════════════
+#  日记
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/diaries")
+async def list_diaries(
+    uid: str = Query("", description="用户 ID（空=全部）"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    core: MemoryCore = Depends(get_core),
+):
+    """日记列表（分页）"""
+    offset = (page - 1) * size
+    if uid:
+        rows = await core.atom_store.fetch(
+            "SELECT id, user_id, date, importance, sentiment, topics FROM diary_entries WHERE user_id=? ORDER BY date DESC LIMIT ? OFFSET ?",
+            (uid, size, offset),
+        )
+        total = (await core.atom_store.fetchone(
+            "SELECT COUNT(*) FROM diary_entries WHERE user_id=?", (uid,)
+        ))[0]
+    else:
+        rows = await core.atom_store.fetch(
+            "SELECT id, user_id, date, importance, sentiment, topics FROM diary_entries ORDER BY date DESC LIMIT ? OFFSET ?",
+            (size, offset),
+        )
+        total = (await core.atom_store.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
+    items = []
+    for r in rows:
+        topics_raw = r[5]
+        topics = []
+        if topics_raw:
+            try:
+                topics = json.loads(topics_raw) if isinstance(topics_raw, str) else topics_raw
+            except Exception:
+                topics = [str(topics_raw)]
+        items.append({
+            "id": r[0], "user_id": r[1], "date": r[2],
+            "importance": r[3], "sentiment": r[4], "topics": topics,
+        })
+    return {"ok": True, "items": items, "total": total, "page": page, "size": size}
+
+
+@router.get("/v1/diaries/{date}")
+async def get_diary(
+    date: str,
+    uid: str = Query(..., description="用户 ID"),
+    core: MemoryCore = Depends(get_core),
+):
+    """获取指定日期日记"""
+    row = await core.atom_store.fetchone(
+        "SELECT * FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+        (uid, date),
+    )
+    if not row:
+        raise HTTPException(404, "该日期没有日记")
+    columns = ["id", "uid", "user_id", "date", "timestamp", "content", "importance",
+               "mood", "topics", "sentiment", "fact_extracted", "fact_retry_count",
+               "archived", "correction", "created_at"]
+    diary = dict(zip(columns, row))
+    return {"ok": True, "data": diary}
+
+
+@router.put("/v1/diaries/{date}")
+async def update_diary(
+    date: str,
+    body: DiaryUpdateRequest,
+    uid: str = Query(..., description="用户 ID"),
+    core: MemoryCore = Depends(get_core),
+):
+    """更新指定日期日记"""
+    from ..core.diary_helper import parse_diary_content, mood_to_sentiment
+    content = body.content
+    await core.diary_store.upsert(uid, date, content)
+    fm, _ = parse_diary_content(content)
+    updates = {}
+    if "mood" in fm:
+        updates["sentiment"] = mood_to_sentiment(str(fm["mood"]))
+    if "importance" in fm:
+        updates["importance"] = float(fm["importance"])
+    if "topics" in fm:
+        topics = fm["topics"]
+        if isinstance(topics, list):
+            updates["topics"] = json.dumps(topics, ensure_ascii=False)
+    if updates:
+        await core.diary_store.update_metadata(uid, date, **updates)
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════
+#  图谱
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/graph/overview")
+async def graph_overview(core: MemoryCore = Depends(get_core)):
+    """图谱概览"""
+    nodes = await core.atom_store.fetch(
+        "SELECT node_type, COUNT(*) FROM graph_nodes GROUP BY node_type"
+    )
+    edges = await core.atom_store.fetch(
+        "SELECT relation_type, COUNT(*) FROM graph_edges GROUP BY relation_type"
+    )
+    return {
+        "ok": True,
+        "nodes": {r[0]: r[1] for r in nodes},
+        "edges": {r[0]: r[1] for r in edges},
+    }
+
+
+@router.post("/v1/graph/query")
+async def graph_query(body: GraphQueryRequest, core: MemoryCore = Depends(get_core)):
+    """实体邻居查询"""
+    from ..core.graph_engine import GraphEngine
+    ge = GraphEngine(
+        graph_store=core.graph_store,
+        atom_store=core.atom_store,
+        diary_store=core.diary_store,
+    )
+    result = await ge.query_neighbors(body.entity)
+    return {
+        "ok": True,
+        "nodes": [
+            {"id": n.node_key, "type": n.node_type, "label": n.value}
+            for n in result.get("nodes", [])
+        ],
+        "edges": [
+            {"source": e.source, "target": e.target, "label": e.relation_type}
+            for e in result.get("edges", [])
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+#  用户
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/users")
+async def list_users(core: MemoryCore = Depends(get_core)):
+    """用户列表"""
+    rows = await core.atom_store.fetch("""
+        SELECT cp.uid, cp.primary_name, up.tier, up.summary, up.last_full_update
+        FROM canonical_users cp
+        LEFT JOIN user_persona up ON cp.uid = up.uid
+        ORDER BY up.last_full_update DESC
+    """)
+    users = [
+        {"uid": r[0], "name": r[1] or r[0], "tier": r[2] or "new",
+         "summary": (r[3] or "")[:100], "last_active": r[4]}
+        for r in rows
+    ]
+    return {"ok": True, "users": users}
+
+
+@router.get("/v1/users/{uid}")
+async def get_user_detail(uid: str, core: MemoryCore = Depends(get_core)):
+    """用户详情"""
+    row = await core.atom_store.fetchone("SELECT * FROM user_persona WHERE uid=?", (uid,))
+    if not row:
+        raise HTTPException(404, "用户不存在")
+    cols = ["uid", "summary", "full_markdown", "tags", "version", "tier",
+            "last_full_update", "last_incremental_update", "known_ids", "primary_name",
+            "identity_confidence", "incremental_count", "diary_count_since_full",
+            "created_at", "updated_at"]
+    return {"ok": True, "data": dict(zip(cols, row))}
+
+
+@router.get("/v1/users/{uid}/persona")
+async def get_persona(uid: str, core: MemoryCore = Depends(get_core)):
+    """获取用户画像"""
+    row = await core.atom_store.fetchone(
+        "SELECT summary, full_markdown, tags FROM user_persona WHERE uid=?", (uid,)
+    )
+    if not row:
+        return {"ok": True, "summary": "", "full_markdown": "", "tags": []}
+    tags = []
+    if row[2]:
+        try:
+            tags = json.loads(row[2]) if isinstance(row[2], str) else row[2]
+        except Exception:
+            tags = []
+    return {"ok": True, "summary": row[0] or "", "full_markdown": row[1] or "", "tags": tags}
+
+
+# ═══════════════════════════════════════════════════════════
+#  系统
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/stats")
+async def get_stats(core: MemoryCore = Depends(get_core)):
+    """系统统计"""
+    return {
+        "ok": True,
+        "users": (await core.atom_store.fetchone("SELECT COUNT(DISTINCT uid) FROM user_persona"))[0] or 0,
+        "diaries": (await core.atom_store.fetchone("SELECT COUNT(*) FROM diary_entries"))[0] or 0,
+        "atoms": (await core.atom_store.fetchone("SELECT COUNT(*) FROM memory_atoms WHERE status='active'"))[0] or 0,
+        "facts": (await core.atom_store.fetchone("SELECT COUNT(*) FROM atomic_facts"))[0] or 0,
+        "graph_nodes": (await core.atom_store.fetchone("SELECT COUNT(*) FROM graph_nodes"))[0] or 0,
+        "graph_edges": (await core.atom_store.fetchone("SELECT COUNT(*) FROM graph_edges"))[0] or 0,
+    }
+
+
+@router.post("/v1/archive/run")
+async def trigger_archive(core: MemoryCore = Depends(get_core)):
+    """手动触发归档"""
+    if not hasattr(core, 'archiver') or not core.archiver:
+        raise HTTPException(400, "归档模块未启用")
+    archived = await core.archiver.archive_daily()
+    return {"ok": True, "archived": archived}
+
+
+@router.post("/v1/decay/run")
+async def trigger_decay(core: MemoryCore = Depends(get_core)):
+    """手动触发重要度衰减"""
+    rate = float(core.config.get("decay_rate", 0.99))
+    enabled = core.config.get("decay_enabled", True)
+    if not enabled:
+        raise HTTPException(400, "衰减已禁用")
+    await core.atom_store.apply_decay(rate)
+    await core.atom_store.execute(
+        f"UPDATE atomic_facts SET importance = importance * {rate} WHERE importance > 0.1"
+    )
+    return {"ok": True, "decay_rate": rate}

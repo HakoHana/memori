@@ -1,6 +1,6 @@
-# Memoria — 长期记忆内核
+# memori — 长期记忆内核
 
-**Memoria** 是一个纯净的 Python 长期记忆内核。
+**memori** 是一个纯净的 Python 长期记忆内核。
 通过两个抽象接口（`LLMProvider` + `ContextProvider`）接入各种 Agent 框架。
 
 ## 特性
@@ -19,7 +19,7 @@
 
 ```bash
 pip install memori
-# 或 htt 服务版
+# 或 HTTP 服务版
 pip install "memori[server]"
 ```
 
@@ -44,7 +44,7 @@ core = MemoryCore(
     config={"bot_name": "Hana"},
     llm_provider=MyLLM(),
     context_provider=MyCtx(),
-    data_dir="./memori_data",
+    data_dir="./data",
 )
 await core.initialize()
 await core.process_message(user_id="user1", message_text="今天测试辛苦了")
@@ -83,19 +83,19 @@ API 文档：`http://localhost:8765/docs`
          SQLite + FTS5 + Graph
 ```
 
-| 层 | 说明 |
-|----|------|
-| `memori/core/` | 业务逻辑：MemoryCore、Retriever、WarmProcessor、Capturer... |
-| `memori/storage/` | SQLite 存储：日记、原子、图谱、会话、画像 |
-| `memori/retrieval/` | 双路检索：BM25 + GraphEntity + RRF |
-| `memori/models/` | 数据模型：MemoryAtom、GraphNode |
-| `memori/api/` | FastAPI HTTP 服务（可选） |
+| 模块 | 说明 |
+|------|------|
+| `memori.core` | 业务逻辑：MemoryCore、Retriever、WarmProcessor、Capturer… |
+| `memori.storage` | SQLite 存储层：日记、原子、图谱、会话、画像 |
+| `memori.models` | 数据模型：MemoryAtom、GraphNode |
+| `memori.retrieval` | 双路检索：BM25 + GraphEntity + RRF |
+| `memori.api` | FastAPI HTTP 服务（可选） |
 
 ## 依赖
 
 | 包 | 用途 |
 |-----|------|
-| `aiosqlite` | 异步 SQLite |
+| `aiosqlite` | 异步 SQLite 驱动 |
 | `cachetools` | TTL 缓存 |
 | `jieba` | 中文分词 |
 | `fastapi` + `uvicorn` | HTTP 服务（可选） |

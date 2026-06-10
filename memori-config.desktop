@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=memori
-Comment=memori 长期记忆系统 Dashboard
-Exec=/home/hako/桌面/claude/memori/memori-config.sh
-Icon=preferences-system
-Terminal=true
-Type=Application
-Categories=Utility;

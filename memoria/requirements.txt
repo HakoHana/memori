@@ -1,0 +1,6 @@
+# Memoria 内核依赖
+# 纯 Python，仅需 SQLite（stdlib）和以下两个可选库
+
+aiosqlite>=0.19.0       # 异步 SQLite 驱动
+cachetools>=7.1.0       # TTL 缓存（画像引擎）
+jieba>=0.42.1           # 中文分词（检索用）

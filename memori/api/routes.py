@@ -387,10 +387,10 @@ async def trigger_decay(core: MemoryCore = Depends(get_core)):
 _CONFIG_META = {
     "bot_name": {"type": "string", "default": "Hana", "label": "Bot 名称", "group": "基础",
                  "hint": "在对话和记忆中使用的名称"},
-    "llm_provider_id": {"type": "string", "default": "", "label": "主模型 ID", "group": "基础",
-                        "hint": "用于记忆整理（写日记/提取原子）的 LLM。留空 = 使用默认"},
-    "judge_provider_id": {"type": "string", "default": "", "label": "判读模型 ID", "group": "基础",
-                          "hint": "用于判断「值不值得记」的 LLM，通常选便宜快速的模型。留空 = 与主模型相同"},
+    "llm_provider_id": {"type": "string", "default": "", "label": "主模型", "group": "基础",
+                        "hint": "用于记忆整理（写日记/提取原子）的 LLM 配置名。在下方「模型提供商」中配置"},
+    "judge_provider_id": {"type": "string", "default": "", "label": "判读模型", "group": "基础",
+                          "hint": "用于判断值不值得记的 LLM，需已在模型提供商中配置。留空 = 与主模型相同"},
     "recall_count": {"type": "int", "default": 5, "label": "召回条数", "group": "检索",
                      "hint": "每次消息处理时最多召回多少条记忆原子"},
     "recall_max_tokens": {"type": "int", "default": 500, "label": "召回 token 上限", "group": "检索",
@@ -497,3 +497,32 @@ async def update_config(body: dict, request: Request, core: MemoryCore = Depends
         )
 
     return {"ok": True, "updated": list(body.keys())}
+
+
+# ═══════════════════════════════════════════════════════════
+#  模型提供商管理
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/v1/providers")
+async def get_providers(core: MemoryCore = Depends(get_core)):
+    """获取已配置的 LLM 提供商列表"""
+    providers = core.config.get("_providers", [])
+    return {"ok": True, "providers": providers,
+            "selected_main": core.config.get("llm_provider_id", ""),
+            "selected_judge": core.config.get("judge_provider_id", "")}
+
+
+@router.put("/v1/providers")
+async def save_providers(body: dict, request: Request, core: MemoryCore = Depends(get_core)):
+    """保存 LLM 提供商配置"""
+    import json
+    providers = body.get("providers", [])
+    core.config["_providers"] = providers
+
+    # 持久化
+    data_dir = getattr(request.app.state, "_data_dir", None)
+    if data_dir:
+        path = Path(data_dir) / "memori_config.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(core.config, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "count": len(providers)}

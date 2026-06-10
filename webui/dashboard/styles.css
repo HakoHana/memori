@@ -2404,6 +2404,8 @@ body {
    ══════════════════════════════════════ */
 #page-settings.active {
   display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 #page-settings .card {
   display: block;

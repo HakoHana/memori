@@ -2402,6 +2402,9 @@ body {
 /* ══════════════════════════════════════
    Settings / Config Page
    ══════════════════════════════════════ */
+#page-settings.active {
+  display: flex !important;
+}
 #page-settings .card {
   display: block;
   margin-bottom: 16px;

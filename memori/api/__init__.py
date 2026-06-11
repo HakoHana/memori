@@ -263,6 +263,18 @@ def create_app(
 
     _ui_path = Path(__file__).parent / "webui_config.html"
 
+    @app.get("/")
+    async def root():
+        """根路径 → Dashboard"""
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/webui/dashboard/index.html")
+
+    @app.get("/settings")
+    async def settings_redirect():
+        """设置页快捷入口"""
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/webui/settings/index.html")
+
     @app.get("/config")
     async def config_page():
         return HTMLResponse(content=_ui_path.read_text(encoding="utf-8"))

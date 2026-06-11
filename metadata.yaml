@@ -1,8 +1,9 @@
 name: memori
-desc: 长期记忆插件 — 基于 memori 内核
+desc: 长期记忆插件 — 基于 memori 内核，自动提取、存储、检索对话记忆
 author: HakoHana
-version: 0.1.0
+version: 0.2.0
 repo: https://github.com/HakoHana/memori
+module: adapters.astrbot.plugin
 tags:
   - memory
   - diary

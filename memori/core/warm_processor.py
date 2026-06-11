@@ -140,17 +140,42 @@ class WarmProcessor:
                     pass
             return
 
-        # 3. Capture — 写日记 + 提取原子 + 更新图谱
+        # 3. ★ 提前去重 — 与已有记忆重复则强化并跳过昂贵模型
+        if self.capturer:
+            try:
+                matched, ex = await self.capturer._apply_reinforcement(
+                    content=tagged,
+                    user_id=user_id,
+                    judge_importance=judge.importance,
+                    threshold=0.85,
+                )
+                if matched:
+                    logger.info(
+                        f"[WarmProcessor] 提前去重命中，跳过 Capture: "
+                        f"uid={user_id} matched_id={ex.atom_id if ex else '?'} "
+                        f"content={tagged[:60]}"
+                    )
+                    if on_done:
+                        try:
+                            result = CaptureResult(wrote_diary=False)
+                            await on_done(user_id, result)
+                        except Exception:
+                            pass
+                    return
+            except Exception as e:
+                logger.warning(f"[WarmProcessor] 提前去重异常（忽略，继续 Capture）: {e}")
+
+        # 4. Capture — 写日记 + 提取原子 + 更新图谱
         result = await self._capture_with_retry(user_id, tagged, judge)
 
-        # 4. Persona 更新（L3）
+        # 5. Persona 更新（L3）
         if result.wrote_diary and state:
             try:
                 await self._maybe_update_persona(user_id, state)
             except Exception as e:
                 logger.warning(f"[WarmProcessor] L3 画像更新失败: {e}")
 
-        # 5. 回调通知 ConsolidationManager 更新状态
+        # 6. 回调通知 ConsolidationManager 更新状态
         if on_done:
             try:
                 await on_done(user_id, result)

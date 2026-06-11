@@ -544,6 +544,109 @@ class MemoryCore:
         except Exception:
             pass
 
+    async def add_agent_memory(
+        self,
+        user_id: str,
+        memory: str,
+        key_facts: list[str] | None = None,
+        topics: list[str] | None = None,
+        sentiment: str = "neutral",
+        importance: float = 0.5,
+    ) -> dict:
+        """Agent 主动写入记忆
+
+        供外部 Agent 框架的工具（Tool Call）调用。
+        不做 LLM 调用，纯格式化 + 规则分类 + 落库。
+
+        Args:
+            user_id: 用户标识
+            memory: 记忆摘要文本（对应日记内容）
+            key_facts: 关键事实列表（将被规则分类为原子）
+            topics: 主题标签
+            sentiment: 情感 positive / neutral / negative
+            importance: 重要性 0~1
+
+        Returns:
+            {"id": int, "atom_count": int, "status": "ok"}
+        """
+        if not self._initialized or not user_id or not memory:
+            return {"id": 0, "atom_count": 0, "status": "skipped"}
+
+        today = time.strftime("%Y-%m-%d")
+
+        # 1. 写日记
+        from .diary_helper import build_diary_content
+        fm = {
+            "date": today,
+            "mood": sentiment,
+            "importance": importance,
+            "topics": topics or [],
+        }
+        diary_content = build_diary_content(fm, memory)
+        diary_id = await self.diary_store.append(user_id, today, diary_content)
+
+        # 2. 原子分类 + 落库
+        atoms: list[MemoryAtom] = []
+        if key_facts and self.atom_store:
+            from .atom_classifier import classify_atoms
+            atoms = classify_atoms(
+                key_facts=key_facts,
+                entities=topics or [],
+                parent_importance=importance,
+                user_id=user_id,
+                diary_date=today,
+            )
+            for atom in atoms:
+                atom.diary_id = diary_id
+                atom.prepare_insert()
+            if atoms:
+                ids = await self.atom_store.insert_many(atoms)
+                for atom, aid in zip(atoms, ids):
+                    atom.atom_id = aid
+
+        return {
+            "id": diary_id,
+            "atom_count": len(atoms),
+            "status": "ok",
+        }
+
+    async def search_agent_memory(
+        self,
+        user_id: str,
+        query: str,
+        k: int = 5,
+    ) -> list[dict]:
+        """Agent 主动搜索记忆
+
+        供外部 Agent 框架的工具（Tool Call）调用。
+        返回结构化的记忆列表，不含 LLM 调用。
+
+        Args:
+            user_id: 用户标识
+            query: 搜索关键词
+            k: 返回条数
+
+        Returns:
+            [{"id": int, "content": str, "type": str, "importance": float,
+              "date": str, "entities": list[str], "score": float}, ...]
+        """
+        if not self._initialized or not self.retriever:
+            return []
+
+        atoms = await self.retriever.recall(user_id, query, k)
+        results = []
+        for atom in atoms:
+            results.append({
+                "id": atom.atom_id,
+                "content": atom.content,
+                "type": atom.atom_type.value,
+                "importance": atom.importance,
+                "date": atom.diary_date,
+                "entities": atom.entities,
+                "confidence": atom.confidence,
+            })
+        return results
+
     async def _handle_command(self, user_id: str, message: str):
         parts = message.strip().split()
         if not parts:

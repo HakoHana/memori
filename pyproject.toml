@@ -24,5 +24,8 @@ server = [
     "uvicorn>=0.29.0",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [project.urls]
 Source = "https://github.com/HakoHana/memori"

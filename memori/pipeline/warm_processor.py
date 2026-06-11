@@ -6,12 +6,13 @@ import asyncio
 import time
 from typing import Any, Callable
 
-from .logger import logger
+from ..core.logger import logger
 
 from ..models.memory_atom import CaptureResult
+from ..core.interfaces import IWarmProcessor, ICapturer, IGraphEngine, IPersonaEngine
 
 
-class WarmProcessor:
+class WarmProcessor(IWarmProcessor):
     """
     后台暖处理队列
 
@@ -24,9 +25,9 @@ class WarmProcessor:
 
     def __init__(
         self,
-        capturer=None,
-        graph_engine=None,
-        persona_engine=None,
+        capturer: ICapturer | None = None,
+        graph_engine: IGraphEngine | None = None,
+        persona_engine: IPersonaEngine | None = None,
         config: dict[str, Any] | None = None,
     ):
         self.capturer = capturer
@@ -143,7 +144,7 @@ class WarmProcessor:
         # 3. ★ 提前去重 — 与已有记忆重复则强化并跳过昂贵模型
         if self.capturer:
             try:
-                matched, ex = await self.capturer._apply_reinforcement(
+                matched, ex = await self.capturer.apply_reinforcement(
                     content=tagged,
                     user_id=user_id,
                     judge_importance=judge.importance,
@@ -233,13 +234,13 @@ class WarmProcessor:
 
     # ── 外部注入 ──
 
-    def set_capturer(self, capturer):
+    def set_capturer(self, capturer: ICapturer):
         self.capturer = capturer
 
-    def set_graph_engine(self, graph_engine):
+    def set_graph_engine(self, graph_engine: IGraphEngine):
         self.graph_engine = graph_engine
 
-    def set_persona_engine(self, persona_engine):
+    def set_persona_engine(self, persona_engine: IPersonaEngine):
         self.persona_engine = persona_engine
 
     @property

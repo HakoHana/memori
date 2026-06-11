@@ -11,9 +11,10 @@ from ..models.memory_atom import MemoryAtom
 from ..storage.graph_store import GraphStore
 from ..storage.atom_store import AtomStore
 from ..storage.diary_store import DiaryStore
+from ..core.interfaces import IGraphEngine
 
 
-class GraphEngine:
+class GraphEngine(IGraphEngine):
     """
     图谱引擎
 
@@ -62,7 +63,7 @@ class GraphEngine:
         3. 创建 mentions 边 (entity → diary)
         4. 更新 co_occur 计数
         """
-        from ..core.diary_helper import extract_wikilinks
+        from ..utils.diary_helper import extract_wikilinks
 
         # 1. 提取 [[链接]] + 合并传入实体
         linked = extract_wikilinks(content)
@@ -89,7 +90,7 @@ class GraphEngine:
         diary_node_id = node_key_map.get(diary_key, 0)
 
         # 1b. 解析 frontmatter → topic/emotion/date 节点
-        from ..core.diary_helper import parse_diary_content
+        from ..utils.diary_helper import parse_diary_content
         fm, _ = parse_diary_content(content)
         meta_nodes: list[GraphNode] = []
         date_str = fm.get("date", "")

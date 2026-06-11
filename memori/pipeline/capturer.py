@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .logger import logger
+from ..core.logger import logger
 
 from ..models.memory_atom import (
     MemoryAtom,
@@ -17,12 +17,17 @@ from ..models.memory_atom import (
     CaptureJudgeResult,
     CaptureResult,
 )
-from ..storage.diary_store import DiaryStore
-from ..storage.atom_store import AtomStore
-from .adapters import LLMProvider
+from ..core.adapters import LLMProvider
+from ..core.interfaces import ICapturer
+from .capture_step import (
+    CaptureStep, CaptureContext,
+    QualityCheckStep, AtomClassifyStep, DiaryFillStep, TruncateStep,
+)
+from .memory_uow import MemoryUnitOfWork
 
 
-class Capturer:
+
+class Capturer(ICapturer):
     """
     抓取器：从对话中提取记忆
 
@@ -33,27 +38,30 @@ class Capturer:
     def __init__(
         self,
         llm_provider: LLMProvider,
-        diary_store: DiaryStore,
-        atom_store: AtomStore,
+        store: MemoryUnitOfWork,
         prompts_dir: str,
         config: dict[str, Any] | None = None,
         on_atoms_created: callable = None,
-        write_op_log=None,
     ):
         self.llm = llm_provider
-        self.diary_store = diary_store
-        self.atom_store = atom_store
+        self._store = store
         self.config = config or {}
         self.max_diary_tokens = self.config.get("max_diary_tokens", 500)
         self.on_atoms_created = on_atoms_created
-        self.write_op_log = write_op_log
 
-        # 功能开关（feature flags）
-        self._enable_rule_classifier = self.config.get("enable_rule_classifier", True)
-        self._enable_quality_check = self.config.get("enable_quality_check", True)
-        self._enable_json_repair = self.config.get("enable_json_repair", True)
-        self._enable_dual_summary = self.config.get("enable_dual_summary", False)
-
+        # 构建 Capture 流水线步骤（策略链）
+        # 新增步骤只需新建 CaptureStep 子类并注册到此列表
+        self._capture_steps: list[CaptureStep] = []
+        self._capture_steps.append(QualityCheckStep(
+            enable=self.config.get("enable_quality_check", True),
+        ))
+        self._capture_steps.append(AtomClassifyStep(
+            use_rule_classifier=self.config.get("enable_rule_classifier", True),
+        ))
+        self._capture_steps.append(DiaryFillStep())
+        self._capture_steps.append(TruncateStep(
+            max_atoms=self.config.get("max_atoms_per_capture", 5),
+        ))
         # 加载 prompt 模板（带内存缓存，不重复读文件）
         self._prompts: dict[str, str] = {}
         prompts_path = Path(prompts_dir)
@@ -91,9 +99,7 @@ class Capturer:
         today = time.strftime("%Y-%m-%d")
 
         # 写操作日志（可选）
-        op_id = None
-        if self.write_op_log:
-            op_id = await self.write_op_log.begin("capture", {"user_id": user_id, "date": today})
+        op_id = await self._store.begin_op("capture", {"user_id": user_id, "date": today})
 
         # 1. 合并调用：一次 LLM 输出日记 + 原子
         diary_body, raw_atoms = await self._merged_capture(
@@ -104,7 +110,7 @@ class Capturer:
         diary_id = 0
         if diary_body:
             # 用 frontmatter 包装（自描述格式）
-            from .diary_helper import build_diary_content
+            from ..utils.diary_helper import build_diary_content
             fm = {
                 "date": today,
                 "mood": self._mood_text(judge_result.mood),
@@ -112,18 +118,14 @@ class Capturer:
                 "topics": [judge_result.reason] if judge_result.reason else [],
             }
             diary_content = build_diary_content(fm, diary_body)
-            diary_id = await self.diary_store.append(user_id, today, diary_content)
+            diary_id = await self._store.append_diary(user_id, today, diary_content)
             if op_id:
-                await self.write_op_log.step(op_id, "diary_written")
+                await self._store.step_op(op_id, "diary_written")
 
         # 2a. 去重强化 + 限 5 条
         existing_count = 0
         if diary_id > 0:
-            row = await self.atom_store.fetchone(
-                "SELECT COUNT(*) FROM memory_atoms WHERE diary_id=? AND status='active'",
-                (diary_id,)
-            )
-            existing_count = row[0] if row else 0
+            existing_count = await self._store.count_active_atoms(diary_id)
 
         slots_left = max(0, 5 - existing_count)
         unique_atoms: list = []
@@ -138,24 +140,24 @@ class Capturer:
 
         atoms = unique_atoms
         if atoms:
-            ids = await self.atom_store.insert_many(atoms)
+            ids = await self._store.insert_atoms(atoms)
             for atom, aid in zip(atoms, ids):
                 atom.atom_id = aid
             if op_id:
-                await self.write_op_log.step(op_id, "atoms_stored")
+                await self._store.step_op(op_id, "atoms_stored")
 
             # 同步写入全局事实表（去重）
             if diary_id > 0:
                 max_imp = 0.5
                 for atom in atoms:
                     try:
-                        fact_id = await self.atom_store.ensure_fact(
+                        fact_id = await self._store.ensure_fact(
                             content=atom.content,
                             atom_type=atom.atom_type.value,
                             importance=atom.importance,
                             confidence=atom.confidence,
                         )
-                        await self.atom_store.link_fact(
+                        await self._store.link_fact(
                             diary_id=diary_id,
                             fact_id=fact_id,
                             importance=atom.importance,
@@ -166,9 +168,7 @@ class Capturer:
                     except Exception:
                         pass
                 try:
-                    await self.diary_store.update_metadata(
-                        user_id, today, importance=max_imp
-                    )
+                    await self._store.update_diary_importance(user_id, today, importance=max_imp)
                 except Exception:
                     pass
 
@@ -189,7 +189,7 @@ class Capturer:
                 pass
 
         if op_id:
-            await self.write_op_log.complete(op_id)
+            await self._store.complete_op(op_id)
 
         return CaptureResult(
             wrote_diary=bool(diary_content),
@@ -204,7 +204,7 @@ class Capturer:
         today = time.strftime("%Y-%m-%d")
         return await self._extract_atoms(diary_content, user_id, today)
 
-    async def _apply_reinforcement(
+    async def apply_reinforcement(
         self,
         content: str,
         user_id: str,
@@ -241,7 +241,7 @@ class Capturer:
             query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
             now = time.time()
 
-            existing = await self.atom_store.search_fts(query, user_id, k=5)
+            existing = await self._store.search_fts(query, user_id, k=5)
             for ex in existing:
                 ex_chars = (ex.content or "").replace(" ", "")
                 if len(ex_chars) < 4:
@@ -294,7 +294,7 @@ class Capturer:
         - forgotten 重复 → 删除旧原子，让新原子替代
         """
         content = atom.content or ""
-        matched, ex = await self._apply_reinforcement(content, user_id, judge_importance, atom.confidence)
+        matched, ex = await self.apply_reinforcement(content, user_id, judge_importance, atom.confidence)
         if matched:
             # 同 batch 的插入跳过
             if ex.diary_id == atom.diary_id:
@@ -325,8 +325,7 @@ class Capturer:
                                 if u2 == 0:
                                     continue
                                 if len(tokens & old_tokens) / u2 >= 0.6:
-                                    await self.atom_store.execute("DELETE FROM memory_atoms WHERE id=?", (r[0],))
-                                    await self.atom_store.execute("DELETE FROM memory_atoms_fts WHERE atom_id=?", (r[0],))
+                                    await self._store.delete_forgotten_atom(r[0])
                         except Exception:
                             pass
         except Exception:
@@ -468,52 +467,18 @@ class Capturer:
         diary_body = parsed.get("diary", "").strip()
         raw_atom_dicts: list[dict] = parsed.get("atoms", [])
 
-        # ── Phase 3: 质量校验（仅日志，不拒写） ──
-        if self._enable_quality_check:
-            from .quality_validator import validate_merged_output
-            quality = validate_merged_output(diary_body, raw_atom_dicts, judge.importance)
-            if quality["diary"] == "low":
-                logger.warning(f"[Memory] 日记质量低: {len(diary_body)}字, 内容={diary_body[:60]}")
-            if quality["atoms"] == "low":
-                logger.warning(f"[Memory] 原子质量低: {len(raw_atom_dicts)}条")
-            if quality["generic_terms"]:
-                logger.warning(f"[Memory] 日记含泛化词: {diary_body[:80]}")
+        # ── 执行策略链：各 CaptureStep 依次加工上下文 ──
+        ctx = CaptureContext(
+            diary_body=diary_body,
+            raw_atom_dicts=raw_atom_dicts,
+            user_id=user_id,
+            diary_date=diary_date,
+            judge_importance=judge.importance,
+        )
+        for step in self._capture_steps:
+            ctx = await step.process(ctx)
 
-        # ── Phase 1: 规则基分类或传统 LLM 驱动 ──
-        if self._enable_rule_classifier:
-            from .atom_classifier import classify_atoms
-            # 提取 key_facts（content 列表）和 entities
-            key_facts = [a.get("content", "") for a in raw_atom_dicts if a.get("content")]
-            all_entities = list(set(
-                e for a in raw_atom_dicts for e in a.get("entities", [])
-            ))
-            raw_atoms = classify_atoms(
-                key_facts=key_facts,
-                entities=all_entities,
-                parent_importance=judge.importance,
-                user_id=user_id,
-                diary_date=diary_date,
-            )
-            # 把 diary_snippet 从原始 dict 中补回（classifier 不处理这个字段）
-            snippet_map: dict[str, str] = {}
-            for a in raw_atom_dicts:
-                content = a.get("content", "").strip()
-                snippet = a.get("diary_snippet", "").strip()
-                if content and snippet:
-                    snippet_map[content] = snippet
-            for atom in raw_atoms:
-                if atom.content in snippet_map:
-                    atom.diary_snippet = snippet_map[atom.content]
-        else:
-            raw_atoms = self._convert_merged_atoms(raw_atom_dicts, user_id, diary_date)
-
-        # 如果 diary 为空但 atoms 存在，给一个简短的占位 diary
-        if not diary_body and raw_atoms:
-            diary_body = f"与{'、'.join(set(e for a in raw_atoms for e in (a.entities or [])))}的对话。"
-
-        # 按重要度降序取 top 5
-        raw_atoms.sort(key=lambda a: a.importance, reverse=True)
-        atoms = raw_atoms[:5]
+        diary_body, atoms = ctx.diary_body, ctx.atoms
 
         logger.info(f"[Memory] 合并调用成功: diary={len(diary_body)}字, atoms={len(atoms)}条")
         return diary_body, atoms

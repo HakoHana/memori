@@ -6,15 +6,15 @@ import asyncio
 import time
 from typing import Any
 
-from .logger import logger
+from ..core.logger import logger
 
 from ..storage.diary_store import DiaryStore
 from ..storage.atom_store import AtomStore
 from ..storage.persona_store import PersonaStore
-from ..core.retriever import Retriever
+from ..core.interfaces import ICommandHandler, IRetriever, ICapturer
 
 
-class CommandHandler:
+class CommandHandler(ICommandHandler):
     """处理 /日记、/记忆、/记忆 搜索 等指令"""
 
     def __init__(
@@ -22,8 +22,8 @@ class CommandHandler:
         diary_store: DiaryStore,
         atom_store: AtomStore,
         persona_store: PersonaStore,
-        retriever: Retriever,
-        capturer=None,
+        retriever: IRetriever,
+        capturer: ICapturer | None = None,
     ):
         self.diary_store = diary_store
         self.atom_store = atom_store
@@ -117,7 +117,7 @@ class CommandHandler:
         if not self.capturer:
             return "❌ 重构功能不可用（未注入 capturer）"
 
-        from ..core.diary_helper import parse_diary_content
+        from ..utils.diary_helper import parse_diary_content
         import time
 
         force_all = any(kw in " ".join(args) for kw in ["全部", "force", "all", "full"])

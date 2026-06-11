@@ -281,7 +281,7 @@ async def update_diary(
     core: MemoryCore = Depends(get_core),
 ):
     """更新指定日期日记"""
-    from ..core.diary_helper import parse_diary_content, mood_to_sentiment
+    from ..utils.diary_helper import parse_diary_content, mood_to_sentiment
     content = body.content
     await core.diary_store.upsert(uid, date, content)
     fm, _ = parse_diary_content(content)
@@ -322,7 +322,7 @@ async def graph_overview(core: MemoryCore = Depends(get_core)):
 @router.post("/v1/graph/query")
 async def graph_query(body: GraphQueryRequest, core: MemoryCore = Depends(get_core)):
     """实体邻居查询"""
-    from ..core.graph_engine import GraphEngine
+    from ..features.graph_engine import GraphEngine
     ge = GraphEngine(
         graph_store=core.graph_store,
         atom_store=core.atom_store,

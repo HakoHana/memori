@@ -6,10 +6,11 @@ import time
 from collections import deque
 from typing import Any
 
-from .context_formatter import format_msg
+from ..utils.context_formatter import format_msg
+from .interfaces import IHotMessageCache
 
 
-class HotMessageCache:
+class HotMessageCache(IHotMessageCache):
     """每个用户的热消息缓存
 
     在 memory_core.on_message 入口处写入，

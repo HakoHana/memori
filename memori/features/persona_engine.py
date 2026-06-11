@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 from cachetools import TTLCache
 
-from .logger import logger
+from ..core.logger import logger
 from ..storage.atom_store import AtomStore
 from ..storage.diary_store import DiaryStore
-from .adapters import LLMProvider
-from .capturer import Capturer
+from ..core.adapters import LLMProvider
+from ..core.interfaces import ICapturer, IPersonaEngine
 
 
 _INC_PROMPT = """当前用户画像（截至 {old_timestamp}）：
@@ -35,7 +35,7 @@ _INC_PROMPT = """当前用户画像（截至 {old_timestamp}）：
 只输出变化部分，不要输出未变化的原有内容。"""
 
 
-class PersonaEngine:
+class PersonaEngine(IPersonaEngine):
     """
     用户画像引擎 — L3Runner
 
@@ -51,7 +51,7 @@ class PersonaEngine:
         llm_provider: LLMProvider,
         atom_store: AtomStore,
         diary_store: DiaryStore,
-        capturer: Capturer,
+        capturer: ICapturer,
         prompts_dir: str,
         config: dict[str, Any] | None = None,
     ):
@@ -164,7 +164,7 @@ class PersonaEngine:
         """应用 LLM 返回的增量 diff"""
         import json
         try:
-            from ..core.diary_helper import _extract_json
+            from ..utils.diary_helper import _extract_json
             data = _extract_json(delta_json)
             if not isinstance(data, dict):
                 return

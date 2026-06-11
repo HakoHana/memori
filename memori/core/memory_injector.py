@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .interfaces import IMemoryInjector
 
-class MemoryInjector:
+
+class MemoryInjector(IMemoryInjector):
     """
     记忆注入器
 

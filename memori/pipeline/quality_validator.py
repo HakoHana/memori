@@ -79,7 +79,12 @@ def has_real_name(text: str) -> bool:
     if not text:
         return False
     # 检测 "姓+名" 模式（姓氏 + 1-2 个汉字）
-    return bool(re.search(rf"(?<=^|[，。！？、\s\[【])[{''.join(_CHINESE_SURNAMES)}][一-鿿]{{1,3}}(?=说|表示|提到|告诉|问|回答|来了|去了|在|是|有|的|$)", text))
+    # Python 3.14 re 要求 look-behind 固定宽度，拆分 ^ 和字符类
+    return bool(re.search(
+        rf"(?:^|(?<=[，。！？、\s\[【]))[{''.join(_CHINESE_SURNAMES)}][一-鿿]{{1,3}}"
+        rf"(?=说|表示|提到|告诉|问|回答|来了|去了|在|是|有|的|$)",
+        text,
+    ))
 
 
 def validate_merged_output(

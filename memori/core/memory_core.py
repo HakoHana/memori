@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,16 +21,47 @@ from ..storage.graph_store import GraphStore
 from ..storage.index_validator import IndexValidator
 from ..storage.db_migration import DBMigration
 from ..storage.base_store import BaseDbStore
-from ..core.graph_engine import GraphEngine
 from .adapters import LLMProvider, ContextProvider
-from .capturer import Capturer
-from .persona_engine import PersonaEngine
+
+# 接口（供类型标注用）
+from .interfaces import (
+    ICapturer, IRetriever, IPersonaEngine, IGraphEngine,
+    IWarmProcessor, IConsolidationManager, ICommandHandler,
+    IMemoryInjector, IHotMessageCache,
+)
+
+# 具体实现（供工厂实例化用）
+from ..pipeline.capturer import Capturer
+from ..pipeline.memory_uow import MemoryUnitOfWork
+from ..features.persona_engine import PersonaEngine
 from .retriever import Retriever
 from .hot_cache import HotMessageCache
-from .warm_processor import WarmProcessor
+from ..pipeline.warm_processor import WarmProcessor
 from .memory_injector import MemoryInjector
-from .consolidation_manager import ConsolidationManager
-from .command_handler import CommandHandler
+from ..pipeline.consolidation_manager import ConsolidationManager
+from ..features.command_handler import CommandHandler
+from ..features.graph_engine import GraphEngine
+
+
+@dataclass
+class MemoryCoreOptions:
+    """MemoryCore 可选配置 — ISP: 调用方只需传入关心的字段
+
+    llm_provider 和 context_provider 是核心依赖，保持为显式参数。
+    其余可选项（存储层覆盖、回复回调、配置字典等）聚合在此。
+    """
+
+    config: dict[str, Any] | None = None
+    data_dir: str | None = None
+    reply_handler: Callable[[str, str], None] | None = None
+    # 存储层覆盖（测试用，默认从 data_dir 自动创建）
+    atom_store: AtomStore | None = None
+    diary_store: DiaryStore | None = None
+    persona_store: PersonaStore | None = None
+    state_store: StateStore | None = None
+    graph_store: GraphStore | None = None
+    conversation_store: ConversationStore | None = None
+    write_op_log: WriteOpLog | None = None
 
 
 class MemoryCore:
@@ -42,9 +74,13 @@ class MemoryCore:
 
     def __init__(
         self,
-        config: dict[str, Any] | None = None,
         llm_provider: LLMProvider | None = None,
         context_provider: ContextProvider | None = None,
+        options: MemoryCoreOptions | None = None,
+        # 以下为旧版平铺参数，已弃用但仍支持（通过 options 兼容）
+        config: dict[str, Any] | None = None,
+        data_dir: str | None = None,
+        reply_handler: Callable[[str, str], None] | None = None,
         atom_store: AtomStore | None = None,
         diary_store: DiaryStore | None = None,
         persona_store: PersonaStore | None = None,
@@ -52,50 +88,50 @@ class MemoryCore:
         graph_store: GraphStore | None = None,
         conversation_store: ConversationStore | None = None,
         write_op_log: WriteOpLog | None = None,
-        data_dir: str | None = None,
-        reply_handler: Callable[[str, str], None] | None = None,
     ):
-        self.config = config or {}
+        # 新旧兼容：options 优先，旧参数兜底
+        opts = options or MemoryCoreOptions()
+        self.config = opts.config if opts.config is not None else (config or {})
         self._initialized = False
 
         # 外部注入的依赖
         self._injected = {
             "llm_provider": llm_provider,
             "context_provider": context_provider,
-            "atom_store": atom_store,
-            "diary_store": diary_store,
-            "persona_store": persona_store,
-            "state_store": state_store,
-            "graph_store": graph_store,
-            "conversation_store": conversation_store,
-            "write_op_log": write_op_log,
+            "atom_store": opts.atom_store or atom_store,
+            "diary_store": opts.diary_store or diary_store,
+            "persona_store": opts.persona_store or persona_store,
+            "state_store": opts.state_store or state_store,
+            "graph_store": opts.graph_store or graph_store,
+            "conversation_store": opts.conversation_store or conversation_store,
+            "write_op_log": opts.write_op_log or write_op_log,
         }
 
-        # 回复回调（不同 Agent 框架用不同方式回复用户）
-        self.reply_handler = reply_handler
+        # 回复回调
+        self.reply_handler = opts.reply_handler or reply_handler
 
-        self.data_dir = Path(data_dir) if data_dir else Path(".")
+        self.data_dir = Path(opts.data_dir or data_dir or ".")
 
-        # 子模块
+        # 子模块（标注为接口类型，实现由工厂类注入）
         self.llm_provider: LLMProvider | None = None
         self.context_provider: ContextProvider | None = None
         self.atom_store: AtomStore | None = None
         self.diary_store: DiaryStore | None = None
         self.persona_store: PersonaStore | None = None
         self.state_store: StateStore | None = None
-        self.capturer: Capturer | None = None
-        self.persona_engine: PersonaEngine | None = None
-        self.retriever: Retriever | None = None
-        self.injector: MemoryInjector | None = None
-        self.consolidation_manager: ConsolidationManager | None = None
-        self.warm_processor: WarmProcessor | None = None
-        self.command_handler: CommandHandler | None = None
+        self.capturer: ICapturer | None = None
+        self.persona_engine: IPersonaEngine | None = None
+        self.retriever: IRetriever | None = None
+        self.injector: IMemoryInjector | None = None
+        self.consolidation_manager: IConsolidationManager | None = None
+        self.warm_processor: IWarmProcessor | None = None
+        self.command_handler: ICommandHandler | None = None
         self.graph_store: GraphStore | None = None
-        self.graph_engine: GraphEngine | None = None
+        self.graph_engine: IGraphEngine | None = None
         self.conversation_store: ConversationStore | None = None
         self.write_op_log: WriteOpLog | None = None
         self.page_api = None
-        self.hot_cache = HotMessageCache()
+        self.hot_cache: IHotMessageCache = HotMessageCache()
         self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
@@ -224,15 +260,20 @@ class MemoryCore:
         except Exception as e:
             logger.warning(f"[Memoria] 图谱后台任务注册失败: {e}")
 
-        # 5. 核心业务模块
-        self.capturer = Capturer(
-            llm_provider=self.llm_provider,
+        # 5a. 存储门面（将 3 个 store 合并为一个 MemoryUnitOfWork）
+        self._memory_uow = MemoryUnitOfWork(
             diary_store=self.diary_store,
             atom_store=self.atom_store,
+            write_op_log=self.write_op_log,
+        )
+
+        # 5b. 核心业务模块
+        self.capturer = Capturer(
+            llm_provider=self.llm_provider,
+            store=self._memory_uow,
             prompts_dir=prompts_dir,
             config=self.config,
             on_atoms_created=self.graph_engine.index_diary,
-            write_op_log=self.write_op_log,
         )
         self.persona_engine = PersonaEngine(
             llm_provider=self.llm_provider,
@@ -575,7 +616,7 @@ class MemoryCore:
         today = time.strftime("%Y-%m-%d")
 
         # 1. 写日记
-        from .diary_helper import build_diary_content
+        from ..utils.diary_helper import build_diary_content
         fm = {
             "date": today,
             "mood": sentiment,
@@ -588,7 +629,7 @@ class MemoryCore:
         # 2. 原子分类 + 落库
         atoms: list[MemoryAtom] = []
         if key_facts and self.atom_store:
-            from .atom_classifier import classify_atoms
+            from ..pipeline.atom_classifier import classify_atoms
             atoms = classify_atoms(
                 key_facts=key_facts,
                 entities=topics or [],
@@ -705,10 +746,7 @@ class MemoryCore:
         if self.injector:
             self.injector.reload_config(self.config)
         if self.consolidation_manager:
-            cm = self.consolidation_manager
-            cm.trigger_msg_count = config.get("trigger_msg_count", cm.trigger_msg_count)
-            cm.trigger_time_minutes = config.get("trigger_time_minutes", cm.trigger_time_minutes)
-            cm.warmup_enabled = config.get("warmup_enabled", cm.warmup_enabled)
+            self.consolidation_manager.update_config(config)
         # 切换 LLM 模型
         if self.llm_provider:
             if "llm_provider_id" in config:

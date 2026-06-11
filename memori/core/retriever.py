@@ -15,9 +15,10 @@ from ..storage.persona_store import PersonaStore
 from ..storage.graph_store import GraphStore
 from .logger import logger
 from ..retrieval import DualRouteRetriever, BM25Retriever, GraphEntityRetriever
+from .interfaces import IRetriever
 
 
-class Retriever:
+class Retriever(IRetriever):
     """
     记忆检索引擎
 
@@ -59,6 +60,11 @@ class Retriever:
 
     # ── RRF 融合 ──
     RRF_K = 60
+
+    @staticmethod
+    def _search_weights() -> tuple[float, float]:
+        """搜索权重配置（用于 diary FTS 排序）"""
+        return 0.6, 0.4
 
     @staticmethod
     def _rrf_merge(lists: list[list[MemoryAtom]], k: int) -> list[MemoryAtom]:
@@ -163,7 +169,7 @@ class Retriever:
 
         返回 RecallResult，包含格式化的文本 + 原子列表 + 画像
         """
-        from .context_formatter import format_date_tag
+        from ..utils.context_formatter import format_date_tag
 
         k = k or self.recall_count
         atoms = await self.recall(user_id, query, k)

@@ -76,7 +76,7 @@ class ConversationStore(BaseDbStore):
         - 跨天但≤7天 → [MM-DD HH:MM]
         - >7天 → [MM-DD]
         """
-        from ..core.context_formatter import format_msg
+        from ..utils.context_formatter import format_msg
         async with self._connect() as db:
             rows = await db.execute_fetchall(
                 "SELECT role, content, sender_name, sender_id, timestamp FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",

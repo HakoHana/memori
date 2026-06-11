@@ -6,13 +6,14 @@ import asyncio
 import time
 from typing import Any
 
-from .logger import logger
+from ..core.logger import logger
 
 from ..models.memory_atom import PersistedSessionState
 from ..storage.state_store import StateStore
+from ..core.interfaces import IConsolidationManager, IWarmProcessor
 
 
-class ConsolidationManager:
+class ConsolidationManager(IConsolidationManager):
     """
     调度器 + 会话状态管理器
 
@@ -227,6 +228,12 @@ class ConsolidationManager:
     def get_state(self, user_id: str) -> PersistedSessionState | None:
         return self._states.get(user_id)
 
-    def set_warm_processor(self, warm_processor):
+    def set_warm_processor(self, warm_processor: IWarmProcessor):
         """注入 WarmProcessor（初始化顺序解耦）"""
         self.warm_processor = warm_processor
+
+    def update_config(self, config: dict[str, Any]):
+        """热更新配置 — 替代外部直接写内部属性"""
+        self.trigger_msg_count = config.get("trigger_msg_count", self.trigger_msg_count)
+        self.trigger_time_minutes = config.get("trigger_time_minutes", self.trigger_time_minutes)
+        self.warmup_enabled = config.get("warmup_enabled", self.warmup_enabled)

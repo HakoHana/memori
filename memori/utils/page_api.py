@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Callable, TYPE_CHECKING
 
-from .logger import logger
+from ..core.logger import logger
 
 if TYPE_CHECKING:
     from ..core.memory_core import MemoryCore
@@ -125,7 +125,7 @@ class PageApi:
     async def query_graph(self):
         """图查询：实体邻居查询"""
         try:
-            from ..core.graph_engine import GraphEngine
+            from ..features.graph_engine import GraphEngine
             body = await self._get_json()
             entity = (body or {}).get("entity", "")
             if not entity:
@@ -380,7 +380,7 @@ class PageApi:
     async def update_diary(self):
         try:
             from quart import request
-            from ..core.diary_helper import parse_diary_content
+            from ..utils.diary_helper import parse_diary_content
             body_req = await request.get_json()
             user_id = body_req.get("user_id", "Hana")
             date = body_req.get("date", "")
@@ -389,7 +389,7 @@ class PageApi:
             fm, _ = parse_diary_content(content)
             updates = {}
             if "mood" in fm:
-                from ..core.diary_helper import mood_to_sentiment
+                from ..utils.diary_helper import mood_to_sentiment
                 updates["sentiment"] = mood_to_sentiment(str(fm["mood"]))
             if "importance" in fm:
                 updates["importance"] = float(fm["importance"])

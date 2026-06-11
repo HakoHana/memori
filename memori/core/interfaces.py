@@ -320,8 +320,14 @@ class IHotMessageCache(ABC):
         content: str,
         sender_name: str = "",
         sender_id: str = "",
+        session_id: str = "",
     ):
         """追加一条消息到用户热缓存"""
+        ...
+
+    @abstractmethod
+    def get_recent(self, user_id: str, limit: int = 20) -> list[dict]:
+        """取最近 N 条原始消息"""
         ...
 
     @abstractmethod
@@ -329,6 +335,11 @@ class IHotMessageCache(ABC):
         self, user_id: str, limit: int = 20, bot_name: str = "我"
     ) -> str:
         """格式化为带时间戳的对话文本"""
+        ...
+
+    @abstractmethod
+    def restore_from_wal(self) -> int:
+        """从 WAL 文件恢复热缓存（启动时调用）"""
         ...
 
     @abstractmethod

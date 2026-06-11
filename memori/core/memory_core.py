@@ -134,7 +134,7 @@ class MemoryCore:
         self.conversation_store: ConversationStore | None = None
         self.write_op_log: WriteOpLog | None = None
         self.page_api = None
-        self.hot_cache: IHotMessageCache = HotMessageCache()
+        self.hot_cache: IHotMessageCache = HotMessageCache(str(self.data_dir))
         self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
@@ -197,6 +197,14 @@ class MemoryCore:
             if isinstance(task, Exception):
                 store_name = ["atom_store", "diary_store", "state_store", "graph_store", "conversation_store", "write_op_log"][i]
                 logger.warning(f"[Memoria] {store_name} 初始化异常: {task}")
+
+        # 从 WAL 恢复热缓存（进程崩溃不丢对话）
+        try:
+            restored = self.hot_cache.restore_from_wal()
+            if restored:
+                logger.info(f"[Memoria] HotCache WAL 恢复: {restored} 条消息")
+        except Exception as e:
+            logger.warning(f"[Memoria] HotCache WAL 恢复失败: {e}")
 
         # 启动时修复未完成的写操作
         try:
@@ -588,12 +596,16 @@ class MemoryCore:
                 await asyncio.sleep(3600)
 
     async def _hotcache_flush_loop(self):
-        """定时将 HotCache → conversations.db（每小时）"""
+        """定时将 HotCache → conversations.db
+
+        每 60 秒检查一次，有未刷写消息则写入 + 滑动窗口。
+        关闭前 destroy() 会再做一次最终刷写。
+        """
         while not self._initialized:
-            await asyncio.sleep(300)
+            await asyncio.sleep(5)
         while True:
             try:
-                await asyncio.sleep(3600)
+                await asyncio.sleep(60)
                 if self.hot_cache and self.conversation_store:
                     flushed = await self.hot_cache.flush_to_db(self.conversation_store)
                     if flushed:
@@ -904,7 +916,20 @@ class MemoryCore:
             logger.warning(f"[Memoria] 指令处理失败 {cmd}: {e}")
 
     async def destroy(self):
-        """优雅关闭"""
+        """优雅关闭 — 先刷写热缓存，再停后台任务"""
+        # 1) 优先刷写热缓存（防止进程关闭时丢失对话）
+        if self.hot_cache and self.conversation_store:
+            try:
+                flushed = await self.hot_cache.flush_to_db(self.conversation_store)
+                if flushed:
+                    logger.info(f"[Memoria] HotCache 关闭刷写: {flushed} 条")
+                deleted = await self.conversation_store.enforce_retention()
+                if deleted:
+                    logger.info(f"[Memoria] 关闭前滑动窗口清理: {deleted} 条")
+            except Exception as e:
+                logger.warning(f"[Memoria] 关闭刷写异常: {e}")
+
+        # 2) 停后台任务
         if self.warm_processor:
             await self.warm_processor.stop()
         if self.consolidation_manager:

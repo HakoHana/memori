@@ -9,7 +9,7 @@ from __future__ import annotations
 from astrbot.api import logger
 from astrbot.api.star import Context
 
-from ...memori.core.adapters import LLMProvider, ContextProvider
+from memori.core.adapters import LLMProvider, ContextProvider
 
 
 class AstrBotLLM(LLMProvider):

@@ -18,7 +18,7 @@ from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.api import logger
 from astrbot.core.star.filter.command import CommandFilter
 
-from ...memori import MemoryCore
+from memori import MemoryCore
 from .adapter import AstrBotLLM, AstrBotCtx
 from .tools import RecallTool, MemorizeTool
 
@@ -232,7 +232,7 @@ class MemoriPlugin(Star):
         if self.core:
             await self.core.destroy()
             try:
-                from ...memori.storage.base_store import BaseDbStore
+                from memori.storage.base_store import BaseDbStore
                 BaseDbStore.close_all_sync()
             except Exception:
                 pass

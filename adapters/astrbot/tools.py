@@ -16,8 +16,8 @@ import time
 
 from astrbot.core.agent.tool import FunctionTool
 
-from ...memori import MemoryCore
-from ...memori.models.memory_atom import MemoryAtom, AtomType
+from memori import MemoryCore
+from memori.models.memory_atom import MemoryAtom, AtomType
 
 
 def _json_result(data: dict) -> str:

@@ -458,6 +458,8 @@ _CONFIG_META = {
                            "hint": "{{content}} = 记忆内容, {{user}} = 用户名。为空则使用内置模板"},
     "injection_max_tokens": {"type": "int", "default": 600, "label": "注入最大 token 数", "group": "注入",
                              "hint": "注入记忆的总 token 预算（含画像和日记片段）"},
+    "injection_max_diaries": {"type": "int", "default": 2, "label": "溯源日记数量", "group": "注入",
+                              "hint": "从最相关原子回溯的日记段落数，0=不展示日记"},
     "persona_mode": {"type": "select", "default": "tags", "options": ["tags", "summary", "full"],
                      "label": "画像模式", "group": "注入",
                      "hint": "tags=标签, summary=一句话摘要, full=完整描述"},

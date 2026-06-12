@@ -175,5 +175,5 @@ class RecallResult:
     memory_text: str = ""
     atoms: list[MemoryAtom] = field(default_factory=list)
     persona_text: str | None = None
-    diary_ref: dict | None = None
-    """最相关原子关联的日记溯源片段: {diary_id, date, snippet}"""
+    diary_refs: list[dict] = field(default_factory=list)
+    """原子关联的日记溯源片段列表: [{diary_id, date, snippet}, ...]"""

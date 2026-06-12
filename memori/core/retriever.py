@@ -213,13 +213,24 @@ class Retriever(IRetriever):
             if summary_short:
                 persona_text = f"{persona_text}\n摘要: {summary_short}" if persona_text else f"摘要: {summary_short}"
 
-        # ── 最相关原子 → 回溯日记 ──
-        diary_ref = None
-        if atoms:
-            diary_ids = await self._find_atom_diaries(atoms[0])
-            diary_ref = await self._best_diary_segment(
-                diary_ids, atoms[0].content, query,
-            )
+        # ── 原子回溯日记：遍历 top 原子，收集不重复的日记段落 ──
+        max_diaries = int(self.config.get("injection_max_diaries", 2))
+        diary_refs: list[dict] = []
+        if atoms and max_diaries > 0:
+            seen_diary_ids: set[int] = set()
+            for atom in atoms:
+                if len(diary_refs) >= max_diaries:
+                    break
+                diary_ids = await self._find_atom_diaries(atom)
+                for did in diary_ids:
+                    if did in seen_diary_ids:
+                        continue
+                    seen_diary_ids.add(did)
+                    seg = await self._best_diary_segment([did], atom.content, query)
+                    if seg:
+                        diary_refs.append(seg)
+                        if len(diary_refs) >= max_diaries:
+                            break
 
         # ── 组装文本 ──
         lines = []
@@ -241,11 +252,12 @@ class Retriever(IRetriever):
                 lines.append("📌 事实")
                 lines.extend(parts)
 
-        # 日记溯源（只跟最相关原子走）
-        if diary_ref:
+        # 日记溯源
+        if diary_refs:
             lines.append("")
             lines.append("📖 溯源原文")
-            lines.append(f"- [{diary_ref['date']} 日记#{diary_ref['diary_id']}] {diary_ref['snippet']}")
+            for dr in diary_refs:
+                lines.append(f"- [{dr['date']} 日记#{dr['diary_id']}] {dr['snippet']}")
 
         # 搜索提示
         lines.append("")
@@ -262,7 +274,7 @@ class Retriever(IRetriever):
             memory_text=text,
             atoms=atoms,
             persona_text="",  # 已嵌入 memory_text，避免 injector 重复
-            diary_ref=diary_ref,
+            diary_refs=diary_refs,
         )
 
     async def _find_atom_diaries(self, atom: MemoryAtom) -> list[int]:

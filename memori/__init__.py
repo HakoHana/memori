@@ -22,6 +22,8 @@ from .core.retriever import Retriever
 from .core.hot_cache import HotMessageCache
 from .core.memory_injector import MemoryInjector
 
+from .lifecycle import LifecycleManager
+
 __all__ = [
     # 核心入口
     "MemoryCore",
@@ -31,6 +33,8 @@ __all__ = [
     "MemoryAtom", "AtomType", "AtomStatus", "RecallResult",
     # 子模块
     "Retriever", "HotMessageCache", "MemoryInjector",
+    # 生命周期管理
+    "LifecycleManager",
 ]
 
 __version__ = "0.1.0"

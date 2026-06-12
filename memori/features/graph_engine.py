@@ -34,11 +34,13 @@ class GraphEngine(IGraphEngine):
         atom_store: AtomStore,
         diary_store: DiaryStore,
         config: dict[str, Any] | None = None,
+        embed_provider=None,
     ):
         self.graph_store = graph_store
         self.atom_store = atom_store
         self.diary_store = diary_store
         self.config = config or {}
+        self.embed_provider = embed_provider
 
     async def index_atom(self, atom: MemoryAtom):
         """为单条原子建立图谱索引"""
@@ -262,6 +264,33 @@ class GraphEngine(IGraphEngine):
                         )
             except Exception:
                 pass
+
+        # 5. 同步计算 entity/topic/emotion 节点 embedding（供图路向量检索使用）
+        if self.embed_provider:
+            embed_texts: list[str] = []
+            embed_targets: list[int] = []
+            for name in all_entities:
+                cv = self._canonicalize(name)
+                for prefix in ("entity:", "user:"):
+                    nid = node_key_map.get(f"{prefix}{cv}")
+                    if nid:
+                        embed_texts.append(name)
+                        embed_targets.append(nid)
+                        break
+            for mn in meta_nodes:
+                if mn.node_type in ("topic", "emotion"):
+                    nid = node_key_map.get(mn.node_key)
+                    if nid:
+                        embed_texts.append(mn.value)
+                        embed_targets.append(nid)
+            if embed_texts:
+                try:
+                    embeddings = await self.embed_provider.embed_batch(embed_texts)
+                    model_name = type(self.embed_provider).__name__
+                    for nid, emb in zip(embed_targets, embeddings):
+                        await self.graph_store.update_node_embedding(nid, emb, model_name)
+                except Exception:
+                    pass
 
     async def upgrade_cooccur_to_relates(self, min_count: int = 3) -> int:
         """将高频共现实体对升级为 relates_to 语义关联边

@@ -1,6 +1,19 @@
-"""多路检索编排 — BM25 文档路 + Graph 图路 + 可选 Vector 向量路
+"""多路检索编排 — 双路四模式混合检索
 
-保留 DualRouteRetriever 作为向后兼容别名。
+架构：
+  MultiRouteRetriever.retrieve()
+  ├── 文档路 (DocumentPath)
+  │   ├── BM25Retriever.retrieve()       ← FTS5 + LIKE on memory_atoms
+  │   └── VectorRetriever.retrieve()     ← embedding on memory_atoms
+  │   └── 内部 RRF(2路, top_k=k) → doc_results
+  ├── 图路 (GraphPath)
+  │   ├── GraphKeywordRetriever.retrieve()  ← FTS5 + LIKE on graph_nodes
+  │   └── GraphVectorRetriever.retrieve()   ← embedding on graph_nodes
+  │   └── 内部 RRF(2路, top_k=k) → graph_results
+  └── 跨路 RRF(文档路 + 图路, top_k=k) → 最终结果
+
+向后兼容：
+  DualRouteRetriever 保留为别名。
 """
 
 from __future__ import annotations
@@ -12,27 +25,30 @@ from ..models.memory_atom import MemoryAtom
 from ..core.logger import logger
 
 from .bm25_retriever import BM25Retriever
-from .graph_entity_retriever import GraphEntityRetriever
+from .graph_keyword_retriever import GraphKeywordRetriever
+from .graph_vector_retriever import GraphVectorRetriever
 from .vector_retriever import VectorRetriever
 from .rrf_fusion import rrf_merge
 
 
 class MultiRouteRetriever:
-    """多路检索引擎
+    """双路四模式混合检索引擎
 
-    协调 BM25 文档路 + Graph 图路 + 可选 Vector 向量路，RRF 融合排序。
-    向量路默认不启用，需传入 VectorRetriever 实例。
+    文档路（BM25 + 向量）+ 图路（关键词 + 向量），
+    先内部 RRF 融合，再跨路 RRF 融合。
     """
 
     def __init__(
         self,
         bm25_retriever: BM25Retriever,
-        graph_retriever: GraphEntityRetriever,
+        graph_keyword_retriever: GraphKeywordRetriever,
         vector_retriever: VectorRetriever | None = None,
+        graph_vector_retriever: GraphVectorRetriever | None = None,
     ):
         self.bm25 = bm25_retriever
-        self.graph = graph_retriever
-        self.vector = vector_retriever
+        self.graph_kw = graph_keyword_retriever
+        self.vec = vector_retriever
+        self.graph_vec = graph_vector_retriever
 
     async def retrieve(
         self,
@@ -40,69 +56,92 @@ class MultiRouteRetriever:
         user_ids: list[str],
         k: int = 5,
     ) -> list[MemoryAtom]:
-        """多路检索入口
+        """双路四模式检索入口
 
-        三路并行 → RRF 融合：
-        1. BM25 文档路 → from memory_atoms_fts
-        2. Graph 图路   → entity→graph→diary→fact
-        3. Vector 向量路 → embedding 余弦相似度（可选）
+        候选数控制：
+        - 子路检索取 k*2
+        - 内部融合取 k
+        - 跨路融合取 k
         """
         if not keywords or not user_ids:
             return []
 
         logger.debug(
-            f"[MultiRoute] keywords={keywords} users={user_ids} top_k={k}"
+            f"[MultiRoute] 双路四模式 keywords={keywords} users={user_ids} top_k={k}"
         )
 
-        # 三路并行（向量路可选）
-        tasks = [
-            asyncio.create_task(
-                self.bm25.retrieve(keywords, user_ids, k=k * 3)
-            ),
-            asyncio.create_task(
-                self.graph.retrieve(keywords, user_ids, k=k * 2)
-            ),
+        # ── 文档路：BM25 + Vector 并行 ──
+        doc_tasks = [
+            asyncio.create_task(self.bm25.retrieve(keywords, user_ids, k=k * 2)),
         ]
-        if self.vector:
-            tasks.append(
-                asyncio.create_task(
-                    self.vector.retrieve(keywords, user_ids, k=k * 2)
-                )
+        if self.vec:
+            doc_tasks.append(
+                asyncio.create_task(self.vec.retrieve(keywords, user_ids, k=k * 2))
             )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        all_lists: list[list[MemoryAtom]] = []
-        for r in results:
+        # ── 图路：GraphKeyword + GraphVector 并行 ──
+        graph_tasks = [
+            asyncio.create_task(self.graph_kw.retrieve(keywords, user_ids, k=k * 2)),
+        ]
+        if self.graph_vec:
+            graph_tasks.append(
+                asyncio.create_task(self.graph_vec.retrieve(keywords, user_ids, k=k * 2))
+            )
+
+        # ── 并发执行 ──
+        doc_results = await asyncio.gather(*doc_tasks, return_exceptions=True)
+        graph_results = await asyncio.gather(*graph_tasks, return_exceptions=True)
+
+        # ── 文档路内部 RRF ──
+        doc_lists: list[list[MemoryAtom]] = []
+        for r in doc_results:
             if isinstance(r, list):
-                all_lists.append(r)
+                doc_lists.append(r)
             elif isinstance(r, Exception):
-                logger.warning(f"[MultiRoute] 一路检索异常: {r}")
+                logger.warning(f"[MultiRoute] 文档一路异常: {r}")
+
+        if not doc_lists:
+            doc_fused = []
+        else:
+            doc_fused = rrf_merge(doc_lists, top_k=k)
+
+        # ── 图路内部 RRF ──
+        graph_lists: list[list[MemoryAtom]] = []
+        for r in graph_results:
+            if isinstance(r, list):
+                graph_lists.append(r)
+            elif isinstance(r, Exception):
+                logger.warning(f"[MultiRoute] 图路一路异常: {r}")
+
+        if not graph_lists:
+            graph_fused = []
+        else:
+            graph_fused = rrf_merge(graph_lists, top_k=k)
 
         logger.debug(
-            f"[MultiRoute] bm25={len(all_lists[0]) if all_lists else 0} "
-            f"graph={len(all_lists[1]) if len(all_lists) > 1 else 0} "
-            f"vector={len(all_lists[2]) if len(all_lists) > 2 else 0}"
+            f"[MultiRoute] 文档路={len(doc_fused)} 图路={len(graph_fused)}"
         )
 
-        if not all_lists:
+        # ── 跨路 RRF ──
+        cross = [doc_fused, graph_fused]
+        cross = [lst for lst in cross if lst]  # 过滤空
+        if not cross:
             return []
 
-        fused = rrf_merge(all_lists, top_k=k)
-        return fused
+        return rrf_merge(cross, top_k=k)
 
 
 # ── 向后兼容别名 ──
 
 class DualRouteRetriever(MultiRouteRetriever):
-    """旧名称兼容 — 等价于不带向量路的 MultiRouteRetriever"""
+    """旧名称兼容 — 使用别名的代码继续工作"""
 
     def __init__(
         self,
         bm25_retriever: BM25Retriever,
-        graph_retriever: GraphEntityRetriever,
+        graph_keyword_retriever: GraphKeywordRetriever,
     ):
         super().__init__(
             bm25_retriever=bm25_retriever,
-            graph_retriever=graph_retriever,
-            vector_retriever=None,
+            graph_keyword_retriever=graph_keyword_retriever,
         )

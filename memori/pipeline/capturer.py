@@ -50,6 +50,8 @@ class Capturer(ICapturer):
         self.max_diary_tokens = self.config.get("max_diary_tokens", 500)
         self.on_atoms_created = on_atoms_created
         self.embed_provider = embed_provider
+        self.atom_store = store._atom
+        self.lifecycle = None  # LifecycleManager（由外部注入，无则跳过去重）
 
         # 构建 Capture 流水线步骤（策略链）
         # 新增步骤只需新建 CaptureStep 子类并注册到此列表
@@ -134,8 +136,17 @@ class Capturer(ICapturer):
         for atom in raw_atoms:
             atom.diary_id = diary_id
             atom.prepare_insert()
-            if await self._reinforce_if_duplicate(atom, user_id, judge_result.importance, today):
-                continue  # 已强化已有原子，不插入
+            if self.lifecycle:
+                matched, ex = await self.lifecycle.dedup_and_reinforce(
+                    atom.content or "", user_id,
+                    judge_importance=judge_result.importance,
+                    new_confidence=atom.confidence,
+                )
+                if matched:
+                    continue  # 已强化已有原子，不插入
+                await self.lifecycle.cleanup_forgotten_duplicates(
+                    atom.content or "", atom.diary_id, [user_id, "Hako"],
+                )
             if len(unique_atoms) >= slots_left:
                 continue  # 超过 5 条上限，跳过
             unique_atoms.append(atom)
@@ -219,91 +230,11 @@ class Capturer(ICapturer):
         today = time.strftime("%Y-%m-%d")
         return await self._extract_atoms(diary_content, user_id, today)
 
-    async def apply_reinforcement(
-        self,
-        content: str,
-        user_id: str,
-        judge_importance: float = 0.5,
-        new_confidence: float = 0.7,
-        threshold: float = 0.6,
-    ) -> tuple[bool, MemoryAtom | None]:
-        """核心：检查内容是否与已有记忆重复，重复则强化
-
-        可被前后调用复用：
-        - Step 3（LLM 前）：传入消息文本，命中则跳过昂贵模型
-        - Step 5（LLM 后）：传入新原子 content，命中则跳过插入
-
-        强化策略：
-        - 步长随强化次数递减（首次 +0.05，后续收敛到 0.01）
-        - 融合 judge 重要性评分（0.7权重judge + 0.3权重原值）
-        - 延长 expires_at 30%
-        - 回写源日记 importance
-
-        Returns:
-            (True, matched_atom)  — 找到重复并强化
-            (False, None)         — 无匹配
-        """
-        try:
-            import math
-
-            chars = content.replace(" ", "")
-            if len(chars) < 4:
-                return False, None
-            tokens = {chars[i:i+2] for i in range(len(chars) - 1)}
-            if len(tokens) < 2:
-                return False, None
-
-            query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
-            now = time.time()
-
-            existing = await self._store.search_fts(query, user_id, k=5)
-            for ex in existing:
-                ex_chars = (ex.content or "").replace(" ", "")
-                if len(ex_chars) < 4:
-                    continue
-                ex_tokens = {ex_chars[i:i+2] for i in range(len(ex_chars) - 1)}
-                if not ex_tokens:
-                    continue
-                union = len(tokens | ex_tokens)
-                if union == 0:
-                    continue
-                jaccard = len(tokens & ex_tokens) / union
-                if jaccard >= threshold:
-                    # 步长递减
-                    step = max(0.01, 0.05 / math.log2((ex.access_count or 0) + 2))
-                    step_boosted = ex.importance + step
-                    # 融合 judge
-                    judge_blend = judge_importance * 0.7 + ex.importance * 0.3
-                    boosted = min(0.95, max(step_boosted, judge_blend))
-                    # 延长 expires_at
-                    old_expires = max(ex.expires_at, now)
-                    new_expires = now + (old_expires - now) * 1.3
-
-                    await self.atom_store.execute(
-                        "UPDATE memory_atoms SET importance=?, confidence=?, access_count=access_count+1, expires_at=? WHERE id=?",
-                        (boosted, max(new_confidence, ex.confidence), new_expires, ex.atom_id),
-                    )
-
-                    # 回写源日记
-                    if boosted > ex.importance and ex.diary_id > 0:
-                        try:
-                            await self.atom_store.execute(
-                                "UPDATE diary_entries SET importance = MAX(importance, ?) WHERE id = ?",
-                                (boosted, ex.diary_id),
-                            )
-                        except Exception:
-                            pass
-
-                    return True, ex
-        except Exception:
-            pass
-        return False, None
-
     async def _compute_embeddings(self, atoms: list[MemoryAtom]):
         """异步计算并持久化原子 embedding
 
         Capture 流程的异步后处理步骤，不阻塞主流程。
-        仅在 embed_provider 配置时自动执行。
+        仅在 embed_provider 配置时自动执行。写入 embedding 后接语义去重。
         """
         if not self.embed_provider or not atoms:
             return
@@ -321,56 +252,11 @@ class Capturer(ICapturer):
                 f"[Capturer] 已计算 {len(embeddings)} 条原子 embedding "
                 f"(model={model_name}, dim={len(embeddings[0]) if embeddings else 0})"
             )
+            # 第二道防线：语义去重（余弦相似度）
+            if self.lifecycle:
+                await self.lifecycle.semantic_dedup(atoms, model_name)
         except Exception as e:
             logger.warning(f"[Capturer] 计算 embedding 失败: {e}")
-
-    async def _reinforce_if_duplicate(
-        self, atom, user_id: str, judge_importance: float = 0.5, diary_date: str = ""
-    ) -> bool:
-        """旧接口包装：LLM 后去重强化 + forgotten 清理
-
-        在 _apply_reinforcement 基础上增加：
-        - 同 diary_id → 跳过插入（True）
-        - forgotten 重复 → 删除旧原子，让新原子替代
-        """
-        content = atom.content or ""
-        matched, ex = await self.apply_reinforcement(content, user_id, judge_importance, atom.confidence)
-        if matched:
-            # 同 batch 的插入跳过
-            if ex.diary_id == atom.diary_id:
-                return True
-            # 跨 batch 的也跳过（已被更强版本覆盖）
-            return True
-
-        # ── forgotten 清理：旧遗忘原子与新原子重复则彻底删除 ──
-        try:
-            chars = content.replace(" ", "")
-            if len(chars) >= 4:
-                tokens = {chars[i:i+2] for i in range(len(chars) - 1)}
-                if len(tokens) >= 2:
-                    for uid in [user_id, "Hako"]:
-                        try:
-                            rows = await self.atom_store.fetch(
-                                "SELECT id, content FROM memory_atoms WHERE user_id=? AND status='forgotten' AND diary_id=?",
-                                (uid, atom.diary_id),
-                            )
-                            for r in rows:
-                                old_c = (r[1] or "").replace(" ", "")
-                                if len(old_c) < 4:
-                                    continue
-                                old_tokens = {old_c[i:i+2] for i in range(len(old_c) - 1)}
-                                if not old_tokens:
-                                    continue
-                                u2 = len(tokens | old_tokens)
-                                if u2 == 0:
-                                    continue
-                                if len(tokens & old_tokens) / u2 >= 0.6:
-                                    await self._store.delete_forgotten_atom(r[0])
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        return False
 
     @staticmethod
     def _mood_text(mood: str) -> str:

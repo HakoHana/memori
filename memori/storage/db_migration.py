@@ -259,6 +259,7 @@ class DBMigration(BaseDbStore):
                 "graph_nodes": [
                     "id", "node_key", "node_type", "value", "canonical_value",
                     "metadata", "created_at", "updated_at",
+                    "embedding", "embedding_model",
                 ],
                 "graph_edges": [
                     "id", "edge_key", "semantic_key", "source_node_id",

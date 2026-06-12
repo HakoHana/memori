@@ -47,23 +47,6 @@ class ICapturer(ABC):
         """判断对话是否值得记录"""
         ...
 
-    @abstractmethod
-    async def apply_reinforcement(
-        self,
-        content: str,
-        user_id: str,
-        judge_importance: float = 0.5,
-        new_confidence: float = 0.7,
-        threshold: float = 0.6,
-    ) -> tuple[bool, MemoryAtom | None]:
-        """去重强化：检查重复，强化已有原子
-
-        Returns:
-            (True, matched_atom) — 找到重复并强化
-            (False, None)        — 无匹配
-        """
-        ...
-
 
 # ═══════════════════════════════════════════════════════════
 #  检索引擎

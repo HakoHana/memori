@@ -1,4 +1,4 @@
-"""归档管理器 — 冷存储 + Markdown 导出"""
+"""归档引擎 — 冷存储 + Markdown 导出"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .logger import logger
+from ..core.logger import logger
 from ..storage.diary_store import DiaryStore
 from ..utils.diary_helper import parse_diary_content, build_diary_content
 
@@ -19,6 +19,8 @@ class Archiver:
     - 每日扫描 diary_entries → 符合条件的导出 Markdown
     - 单篇日记导出
     - 从冷存储恢复
+
+    迁自 core/archiver.py，接口不变。
     """
 
     def __init__(
@@ -68,7 +70,6 @@ class Archiver:
                 file_path = await self._write_cold(uid, date_str, content or "", did)
 
                 # 更新 diary_entries
-                from ..storage.diary_store import DiaryStore
                 await self.diary_store.execute("""
                     UPDATE diary_entries
                     SET content = ?, archived = 1, updated_at = ?

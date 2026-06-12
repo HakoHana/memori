@@ -3,8 +3,10 @@
 测试目标：
 1. should_capture: judge prompt 触发条件
 2. capture: 合并模式完整流水线（策略链 + 存储 + 图谱回调）
-3. apply_reinforcement: 去重强化逻辑
-4. extract_atoms_for_persona: 独立原子提取
+3. extract_atoms_for_persona: 独立原子提取
+
+注意：去重强化逻辑已迁移至 memori.lifecycle.dedup.DedupEngine，
+      Capturer.apply_reinforcement 不再可用。
 """
 
 from __future__ import annotations
@@ -172,24 +174,29 @@ class TestCapture:
         assert not result.wrote_diary  # 分步模式下 LLM 返回空
 
 
-class TestApplyReinforcement:
-    """apply_reinforcement: 去重强化"""
+class TestDedupEngine:
+    """DedupEngine 去重强化（原 Capturer.apply_reinforcement 迁移至 lifecycle）"""
 
     async def test_no_match_returns_false(self, mock_llm, mock_memory_uow, prompts_dir):
         """内容不与已有记忆重复时返回 (False, None)"""
-        c = Capturer(llm_provider=mock_llm, store=mock_memory_uow, prompts_dir=prompts_dir)
-        matched, atom = await c.apply_reinforcement("完全新的内容", "user1")
+        from memori.lifecycle import DedupEngine
+        engine = DedupEngine(atom_store=mock_memory_uow._atom)
+        matched, atom = await engine.dedup_and_reinforce("完全新的内容", "user1")
         assert not matched
         assert atom is None
 
-    async def test_short_content_skipped(self, capturer):
+    async def test_short_content_skipped(self, mock_llm, mock_memory_uow, prompts_dir):
         """长度不足4字符的跳过检测"""
-        matched, atom = await capturer.apply_reinforcement("ab", "user1")
+        from memori.lifecycle import DedupEngine
+        engine = DedupEngine(atom_store=mock_memory_uow._atom)
+        matched, atom = await engine.dedup_and_reinforce("ab", "user1")
         assert not matched
 
-    async def test_search_fts_called(self, capturer, mock_memory_uow):
+    async def test_search_fts_called(self, mock_memory_uow):
         """验证 FTS 检索被调用（匹配逻辑的入口）"""
-        await capturer.apply_reinforcement("测试内容", "user1")
+        from memori.lifecycle import DedupEngine
+        engine = DedupEngine(atom_store=mock_memory_uow._atom)
+        await engine.dedup_and_reinforce("测试内容", "user1")
         assert mock_memory_uow._atom.search_fts.await_count >= 0
 
 

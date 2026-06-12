@@ -14,7 +14,7 @@ from ..storage.diary_store import DiaryStore
 from ..storage.persona_store import PersonaStore
 from ..storage.graph_store import GraphStore
 from .logger import logger
-from ..retrieval import MultiRouteRetriever, BM25Retriever, GraphEntityRetriever, VectorRetriever
+from ..retrieval import MultiRouteRetriever, BM25Retriever, GraphKeywordRetriever, GraphVectorRetriever, VectorRetriever
 from ..core.adapters import EmbeddingProvider
 from .interfaces import IRetriever
 
@@ -53,16 +53,21 @@ class Retriever(IRetriever):
         self.recall_max_tokens = self.config.get("recall_max_tokens", 500)
         self.embed_provider = embed_provider
 
-        # 多路检索引擎（BM25 图路 + 可选向量路）
+        # 多路检索引擎（双路四模式）
         self.multi_route: MultiRouteRetriever | None = None
         if graph_store:
+            keyword_retriever = GraphKeywordRetriever(graph_store, atom_store)
             vector_retriever = (
                 VectorRetriever(atom_store, embed_provider) if embed_provider else None
             )
+            graph_vector_retriever = (
+                GraphVectorRetriever(graph_store, atom_store, embed_provider) if embed_provider else None
+            )
             self.multi_route = MultiRouteRetriever(
                 bm25_retriever=BM25Retriever(atom_store),
-                graph_retriever=GraphEntityRetriever(graph_store, atom_store),
+                graph_keyword_retriever=keyword_retriever,
                 vector_retriever=vector_retriever,
+                graph_vector_retriever=graph_vector_retriever,
             )
         # 向后兼容
         self.dual_route = self.multi_route

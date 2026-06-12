@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from ..models.graph_models import GraphNode, GraphEdge
@@ -28,6 +29,21 @@ class GraphStore(BaseDbStore):
                     updated_at TEXT NOT NULL
                 )
             """)
+            # 为已有数据库补充 embedding 列
+            for col_def in [
+                "embedding BLOB",
+                "embedding_model TEXT DEFAULT ''",
+            ]:
+                col_name = col_def.split()[0]
+                try:
+                    cols = await db.execute_fetchall(
+                        "SELECT name FROM pragma_table_info('graph_nodes') WHERE name=?",
+                        (col_name,),
+                    )
+                    if not cols:
+                        await db.execute(f"ALTER TABLE graph_nodes ADD COLUMN {col_def}")
+                except Exception:
+                    pass
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS graph_edges (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +75,18 @@ class GraphStore(BaseDbStore):
                 CREATE INDEX IF NOT EXISTS idx_graph_edges_memory
                 ON graph_edges(source_memory_id)
             """)
+            # FTS5 全文索引（同步 graph_nodes.value）
+            try:
+                await db.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS graph_nodes_fts
+                    USING fts5(value, content=graph_nodes, tokenize='unicode61')
+                """)
+                try:
+                    await db.execute("INSERT INTO graph_nodes_fts(graph_nodes_fts) VALUES('rebuild')")
+                except Exception:
+                    pass
+            except Exception:
+                pass
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS entity_cooccur (
                     entity_a_id INTEGER NOT NULL,
@@ -315,6 +343,135 @@ class GraphStore(BaseDbStore):
                 for r in edges
             ],
         }
+
+    async def update_node_embedding(self, node_id: int, embedding: list[float], model_name: str):
+        """写入单条节点的 embedding 向量"""
+        blob = json.dumps(embedding).encode("utf-8")
+        await self.execute(
+            "UPDATE graph_nodes SET embedding=?, embedding_model=? WHERE id=?",
+            (blob, model_name, node_id),
+        )
+
+    async def search_vector(
+        self,
+        query_embed: list[float],
+        k: int = 10,
+        model_name: str | None = None,
+    ) -> list[tuple[int, float]]:
+        """向量搜索节点：余弦相似度排序
+
+        Args:
+            query_embed: 查询向量
+            k: 返回 top N
+            model_name: 筛选指定模型生成的 embedding
+
+        Returns:
+            [(node_id, cosine_similarity), ...]
+        """
+        if not query_embed:
+            return []
+
+        # 加载有 embedding 的节点
+        model_filter = "AND embedding_model=?" if model_name else ""
+        try:
+            rows = await self.fetch(
+                f"SELECT id, embedding FROM graph_nodes "
+                f"WHERE embedding IS NOT NULL {model_filter} AND node_type IN ('entity','topic','user') "
+                f"ORDER BY updated_at DESC LIMIT 500",
+                (model_name,) if model_name else (),
+            )
+        except Exception:
+            return []
+
+        if not rows:
+            return []
+
+        q_norm = sum(x * x for x in query_embed) ** 0.5
+        if q_norm < 1e-9:
+            return []
+
+        scored: list[tuple[int, float]] = []
+        for nid, blob in rows:
+            if not blob:
+                continue
+            try:
+                stored = json.loads(blob.decode("utf-8"))
+            except Exception:
+                continue
+            if not stored or len(stored) != len(query_embed):
+                continue
+            dot = sum(a * b for a, b in zip(query_embed, stored))
+            n_norm = sum(x * x for x in stored) ** 0.5
+            if n_norm < 1e-9:
+                continue
+            cos_sim = dot / (q_norm * n_norm)
+            scored.append((nid, max(0.0, cos_sim)))
+
+        scored.sort(key=lambda x: -x[1])
+        return scored[:k]
+
+    async def search_fts(self, query: str, k: int = 10) -> list[dict]:
+        """在 graph_nodes 上全文搜索
+
+        英文/数字走 FTS5 MATCH，中文走 LIKE %kw%。与 BM25Retriever 双模策略一致。
+        """
+        if not query or not query.strip():
+            return []
+        import re
+
+        cleaned = re.sub(r'[^\w一-鿿]', ' ', query).strip()
+        if not cleaned:
+            return []
+        terms = cleaned.split()
+
+        ascii_terms = [t for t in terms if t.isascii() and len(t) >= 2]
+        cjk_terms = [t for t in terms if not t.isascii() and len(t) >= 2]
+
+        results: dict[int, dict] = {}
+
+        # FTS5 MATCH（英文/数字）
+        if ascii_terms:
+            try:
+                fts_q = " OR ".join(f'"{t}"*' for t in ascii_terms)
+                rows = await self.fetch(
+                    """SELECT n.id, n.node_type, n.value, n.canonical_value, rank
+                       FROM graph_nodes_fts
+                       JOIN graph_nodes n ON graph_nodes_fts.rowid = n.id
+                       WHERE graph_nodes_fts MATCH ?
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (fts_q, k * 2),
+                )
+                for r in rows:
+                    results[r[0]] = {
+                        "id": r[0], "node_type": r[1], "value": r[2],
+                        "canonical_value": r[3], "score": 1.0,
+                    }
+            except Exception:
+                pass
+
+        # LIKE 查询（中文）
+        if cjk_terms:
+            for term in cjk_terms:
+                try:
+                    rows = await self.fetch(
+                        """SELECT id, node_type, value, canonical_value
+                           FROM graph_nodes
+                           WHERE (value LIKE ? OR canonical_value LIKE ?)
+                             AND node_type IN ('entity','topic','user')
+                           LIMIT 20""",
+                        (f"%{term}%", f"%{term}%"),
+                    )
+                    for r in rows:
+                        if r[0] not in results:
+                            results[r[0]] = {
+                                "id": r[0], "node_type": r[1], "value": r[2],
+                                "canonical_value": r[3], "score": 0.8,
+                            }
+                except Exception:
+                    pass
+
+        return list(results.values())[:k]
 
     @staticmethod
     def _now_iso() -> str:

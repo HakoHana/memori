@@ -142,9 +142,9 @@ class WarmProcessor(IWarmProcessor):
             return
 
         # 3. ★ 提前去重 — 与已有记忆重复则强化并跳过昂贵模型
-        if self.capturer:
+        if self.capturer and self.capturer.lifecycle:
             try:
-                matched, ex = await self.capturer.apply_reinforcement(
+                matched, ex = await self.capturer.lifecycle.dedup_and_reinforce(
                     content=tagged,
                     user_id=user_id,
                     judge_importance=judge.importance,

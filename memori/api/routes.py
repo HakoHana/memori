@@ -414,24 +414,19 @@ async def get_stats(core: MemoryCore = Depends(get_core)):
 @router.post("/v1/archive/run")
 async def trigger_archive(core: MemoryCore = Depends(get_core)):
     """手动触发归档"""
-    if not hasattr(core, 'archiver') or not core.archiver:
+    if not hasattr(core, 'lifecycle') or not core.lifecycle or not core.lifecycle.archiver:
         raise HTTPException(400, "归档模块未启用")
-    archived = await core.archiver.archive_daily()
+    archived = await core.lifecycle.archiver.archive_daily()
     return {"ok": True, "archived": archived}
 
 
 @router.post("/v1/decay/run")
 async def trigger_decay(core: MemoryCore = Depends(get_core)):
     """手动触发重要度衰减"""
-    rate = float(core.config.get("decay_rate", 0.99))
-    enabled = core.config.get("decay_enabled", True)
-    if not enabled:
-        raise HTTPException(400, "衰减已禁用")
-    await core.atom_store.apply_decay(rate)
-    await core.atom_store.execute(
-        f"UPDATE atomic_facts SET importance = importance * {rate} WHERE importance > 0.1"
-    )
-    return {"ok": True, "decay_rate": rate}
+    if not hasattr(core, 'lifecycle') or not core.lifecycle:
+        raise HTTPException(400, "生命周期管理器未启用")
+    count = await core.lifecycle.decay.apply_global_decay()
+    return {"ok": True, "decay_count": count}
 
 
 # ═══════════════════════════════════════════════════════════

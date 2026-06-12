@@ -226,46 +226,17 @@ class MemoryCore:
         except Exception as e:
             logger.warning(f"[Memoria] 旧数据迁移异常: {e}")
 
-        # 归档模块
-        if self.diary_store and self.config.get("archive", {}).get("enabled", True):
-            try:
-                from .archiver import Archiver
-                self.archiver = Archiver(
-                    diary_store=self.diary_store,
-                    archive_dir=self.config.get("archive", {}).get("path", "./memory_archive"),
-                    config=self.config,
-                )
-                archive_task = asyncio.ensure_future(self._archive_loop())
-                self._background_tasks.add(archive_task)
-                archive_task.add_done_callback(self._background_tasks.discard)
-            except Exception as e:
-                logger.warning(f"[Memoria] 初始化归档模块失败: {e}")
-        else:
-            self.archiver = None
-
         # 索引一致性检查
         task = asyncio.ensure_future(self._async_index_check(db_path))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-
-        # 重要度衰减
-        decay_task = asyncio.ensure_future(self._decay_loop())
-        self._background_tasks.add(decay_task)
-        decay_task.add_done_callback(self._background_tasks.discard)
-
-        # 启动时清理孤立原子
-        try:
-            cleaned = await self._cleanup_orphan_atoms()
-            if cleaned > 0:
-                logger.info(f"[Memoria] 启动时清理了 {cleaned} 条孤立原子")
-        except Exception:
-            pass
 
         # 4. 图谱引擎
         self.graph_engine = GraphEngine(
             graph_store=self.graph_store,
             atom_store=self.atom_store,
             diary_store=self.diary_store,
+            embed_provider=self.embed_provider,
         )
 
         # 后台图谱任务
@@ -300,6 +271,39 @@ class MemoryCore:
             on_atoms_created=self.graph_engine.index_diary,
             embed_provider=self.embed_provider,
         )
+        # 5c. 记忆生命周期管理器（去重/衰减/归档/清理）
+        try:
+            from ..lifecycle import LifecycleManager
+            self.lifecycle = LifecycleManager(
+                atom_store=self.atom_store,
+                diary_store=self.diary_store,
+                embed_provider=self.embed_provider,
+                config={
+                    "decay_rate": self.config.get("decay_rate", 0.99),
+                    "decay_enabled": self.config.get("decay_enabled", True),
+                    "expired_atom_ttl_days": self.config.get("expired_atom_ttl_days", 60),
+                    "archive": self.config.get("archive", {}),
+                    "archive_path": self.config.get("archive", {}).get("path", "./memory_archive"),
+                    "orphan_importance_threshold": self.config.get("orphan_importance_threshold", 0.2),
+                },
+            )
+            # 注入到 Capturer
+            self.capturer.lifecycle = self.lifecycle
+            # 启动后台生命周期循环
+            lc_task = asyncio.ensure_future(self._lifecycle_loops())
+            self._background_tasks.add(lc_task)
+            lc_task.add_done_callback(self._background_tasks.discard)
+            # 启动时清理孤立原子
+            try:
+                cleaned = await self.lifecycle.cleanup.cleanup_orphans()
+                if cleaned > 0:
+                    logger.info(f"[Memoria] 启动时清理了 {cleaned} 条孤立原子")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"[Memoria] 生命周期管理器初始化失败: {e}")
+            self.lifecycle = None
+
         self.persona_engine = PersonaEngine(
             llm_provider=self.llm_provider,
             atom_store=self.atom_store,
@@ -393,80 +397,22 @@ class MemoryCore:
         except Exception as e:
             logger.warning(f"[Memoria] 索引检查失败: {e}")
 
-    async def _decay_loop(self):
+    async def _lifecycle_loops(self):
         while not self._initialized:
             await asyncio.sleep(3600)
         while True:
             try:
                 await asyncio.sleep(86400)
-                if not self.atom_store:
+                if not self.lifecycle:
                     continue
-                rate = float(self.config.get("decay_rate", 0.99))
-                enabled = self.config.get("decay_enabled", True)
-                if not enabled or rate <= 0 or rate >= 1.0:
-                    continue
-                await self.atom_store.apply_decay(rate)
-                await self.atom_store.execute(
-                    f"UPDATE atomic_facts SET importance = importance * {rate} WHERE importance > 0.1"
-                )
-                logger.info(f"[Memoria] 重要度衰减完成 (rate={rate})")
-                try:
-                    await self._cleanup_expired_atoms()
-                except Exception as e:
-                    logger.warning(f"[Memoria] 过期原子清理异常: {e}")
+                await self.lifecycle.run_daily_decay()
+                await self.lifecycle.run_daily_archive()
+                await self.lifecycle.run_daily_cleanup()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Memoria] 重要度衰减异常: {e}")
+                logger.warning(f"[Memoria] 生命周期循环异常: {e}")
                 await asyncio.sleep(3600)
-
-    async def _cleanup_orphan_atoms(self) -> int:
-        if not self.atom_store or not self.diary_store:
-            return 0
-        rows = await self.atom_store.fetch(
-            "SELECT DISTINCT diary_id FROM memory_atoms "
-            "WHERE status='active' AND importance < 0.2 AND diary_id > 0"
-        )
-        if not rows:
-            return 0
-        orphan_ids = []
-        for (did,) in rows:
-            row = await self.diary_store.fetchone(
-                "SELECT 1 FROM diary_entries WHERE id=?", (did,)
-            )
-            if not row:
-                orphan_ids.append(did)
-        if not orphan_ids:
-            return 0
-        placeholders = ",".join("?" for _ in orphan_ids)
-        cursor = await self.atom_store.execute(f"""
-            UPDATE memory_atoms SET status='dormant'
-            WHERE status='active' AND importance < 0.2 AND diary_id IN ({placeholders})
-        """, orphan_ids)
-        count = cursor.rowcount if cursor else 0
-        if count > 0:
-            await self.atom_store.execute(
-                "DELETE FROM memory_atoms_fts WHERE atom_id NOT IN "
-                "(SELECT id FROM memory_atoms WHERE status IN ('active','dormant'))"
-            )
-        return count
-
-    async def _cleanup_expired_atoms(self):
-        if not self.atom_store:
-            return 0
-        ttl_days = float(self.config.get("expired_atom_ttl_days", 60))
-        cutoff = time.time() - ttl_days * 86400
-        cursor = await self.atom_store.execute(
-            "DELETE FROM memory_atoms WHERE status IN ('dormant','forgotten') AND created_at < ?",
-            (cutoff,),
-        )
-        count = cursor.rowcount if cursor else 0
-        if count > 0:
-            await self.atom_store.execute(
-                "DELETE FROM memory_atoms_fts WHERE atom_id NOT IN (SELECT id FROM memory_atoms)"
-            )
-            logger.info(f"[Memoria] 清理了 {count} 条过期原子 (>{ttl_days:.0f}天)")
-        return count
 
     async def _maybe_copy_legacy_data(self, old_db: str):
         """一次性的旧数据迁移：从旧单库 memory.db 分拆到各独立数据库
@@ -577,23 +523,6 @@ class MemoryCore:
                     logger.warning(f"[Memoria] 旧数据迁移失败 {table}: {e}")
 
         logger.info("[Memoria] 旧数据迁移完成")
-
-    async def _archive_loop(self):
-        while not self._initialized:
-            await asyncio.sleep(3600)
-        while True:
-            try:
-                await asyncio.sleep(86400)
-                if not hasattr(self, 'archiver') or not self.archiver:
-                    continue
-                archived = await self.archiver.archive_daily()
-                if archived:
-                    logger.info(f"[Memoria] 归档完成: {archived} 条")
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"[Memoria] 归档异常: {e}")
-                await asyncio.sleep(3600)
 
     async def _hotcache_flush_loop(self):
         """定时将 HotCache → conversations.db

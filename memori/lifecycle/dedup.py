@@ -79,7 +79,8 @@ class DedupEngine:
             query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
             now = time.time()
 
-            existing = await self.atom_store.search_fts(query, user_id, k=5)
+            # 全局搜索：原子事实无用户边界，跨用户去重
+            existing = await self.atom_store.search_fts(query, user_id=None, k=5)
             for ex in existing:
                 if use_bigram_fallback:
                     ex_chars = (ex.content or "").replace(" ", "")

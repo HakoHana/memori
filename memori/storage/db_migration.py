@@ -26,7 +26,7 @@ from .base_store import BaseDbStore
 # ── 当前 schema 版本 ──────────────────────────────────────
 # 升级此值表示有一套新的迁移要跑。
 # 迁移方法名必须为 _migrate_v{version} 或 _migrate_{scope}_v{version}。
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 
 # ── 每类数据库的 schema 版本（默认 0 表示由 Store.initialize() 统一建表） ──
 VERSIONS: dict[str, int] = {
@@ -406,3 +406,42 @@ class DBMigration(BaseDbStore):
                     pass
             await db.commit()
         logger.info("[Migration] v4 完成: 已删除 atomic_facts / diary_fact_links")
+
+    async def _migrate_v5(self):
+        """
+        v5: 创建 atoms_diary_links 桥表（原子↔日记多对多），从旧 diary_id 迁移数据
+
+        memory_atoms.diary_id 仍保留但不作为主关联路径，
+        新的多对多关联通过 atoms_diary_links 桥表实现。
+        """
+        async with self._connect() as db:
+            # 创建桥表
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS atoms_diary_links (
+                    atom_id INTEGER NOT NULL,
+                    diary_id INTEGER NOT NULL,
+                    snippet TEXT DEFAULT '',
+                    importance REAL DEFAULT 0.5,
+                    PRIMARY KEY (atom_id, diary_id)
+                )
+            """)
+            try:
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_adl_atom ON atoms_diary_links(atom_id)"
+                )
+            except Exception:
+                pass
+            try:
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_adl_diary ON atoms_diary_links(diary_id)"
+                )
+            except Exception:
+                pass
+            # 从旧 diary_id 迁移数据
+            await db.execute("""
+                INSERT OR IGNORE INTO atoms_diary_links (atom_id, diary_id, snippet, importance)
+                SELECT id, diary_id, COALESCE(diary_snippet, ''), importance
+                FROM memory_atoms WHERE diary_id > 0
+            """)
+            await db.commit()
+        logger.info("[Migration] v5 完成: 桥表 atoms_diary_links 已就绪")

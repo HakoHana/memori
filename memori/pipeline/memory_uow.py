@@ -84,6 +84,11 @@ class MemoryUnitOfWork:
 
     # ── 原子写入 ──
 
+    @property
+    def atom_store(self):
+        """暴露原子存储（供 Capturer 调桥表方法）"""
+        return self._atom
+
     async def insert_atoms(self, atoms: list[MemoryAtom]) -> list[int]:
         """批量插入原子，返回 ID 列表"""
         return await self._atom.insert_many(atoms)

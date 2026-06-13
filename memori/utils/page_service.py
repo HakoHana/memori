@@ -148,8 +148,9 @@ class PageService:
                        "archived", "correction", "created_at"]
             diary = dict(zip(columns, row))
             atoms = await self._db.fetch(
-                "SELECT id, content, atom_type, importance FROM memory_atoms "
-                "WHERE diary_id=? AND status='active' ORDER BY importance DESC",
+                "SELECT a.id, a.content, a.atom_type, a.importance FROM memory_atoms a "
+                "JOIN atoms_diary_links d ON a.id = d.atom_id "
+                "WHERE d.diary_id=? AND a.status='active' ORDER BY d.importance DESC",
                 (entry_id,),
             )
             diary["atoms"] = [{"id": a[0], "content": a[1], "type": a[2], "importance": a[3]} for a in atoms]
@@ -174,11 +175,11 @@ class PageService:
         """删除单条日记及其独占原子"""
         exclusive = await self._db.fetch("""
             SELECT ma.id FROM memory_atoms ma
-            WHERE ma.diary_id=? AND ma.status='active'
-            AND (SELECT COUNT(*) FROM memory_atoms sub
-                 WHERE sub.content=ma.content AND sub.user_id=ma.user_id
-                 AND sub.status='active' AND sub.diary_id!=ma.diary_id) = 0
-        """, (diary_id,))
+            JOIN atoms_diary_links d ON ma.id = d.atom_id
+            WHERE d.diary_id=? AND ma.status='active'
+            AND (SELECT COUNT(*) FROM atoms_diary_links sub
+                 WHERE sub.atom_id=ma.id AND sub.diary_id!=?) = 0
+        """, (diary_id, diary_id))
         eids = [r[0] for r in exclusive]
         if eids:
             ph = ",".join("?" * len(eids))
@@ -264,8 +265,9 @@ class PageService:
                        "archived", "correction", "created_at"]
             diary = dict(zip(columns, row))
             atoms = await self._db.fetch(
-                "SELECT id, content, atom_type, importance FROM memory_atoms "
-                "WHERE diary_id=? AND status='active' ORDER BY importance DESC",
+                "SELECT a.id, a.content, a.atom_type, a.importance FROM memory_atoms a "
+                "JOIN atoms_diary_links d ON a.id = d.atom_id "
+                "WHERE d.diary_id=? AND a.status='active' ORDER BY d.importance DESC",
                 (diary["id"],),
             )
             diary["atoms"] = [{"id": a[0], "content": a[1], "type": a[2], "importance": a[3]} for a in atoms]

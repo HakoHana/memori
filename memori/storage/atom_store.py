@@ -74,6 +74,23 @@ class AtomStore(BaseDbStore, MemoryStore):
             except Exception:
                 pass
 
+            # 原子 ↔ 日记 多对多桥表
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS atoms_diary_links (
+                    atom_id INTEGER NOT NULL,
+                    diary_id INTEGER NOT NULL,
+                    snippet TEXT DEFAULT '',
+                    importance REAL DEFAULT 0.5,
+                    PRIMARY KEY (atom_id, diary_id)
+                )
+            """)
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_adl_atom ON atoms_diary_links(atom_id)"
+            )
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_adl_diary ON atoms_diary_links(diary_id)"
+            )
+
             # 用户注册表（user_id → 可读名字）
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_registry (
@@ -183,36 +200,47 @@ class AtomStore(BaseDbStore, MemoryStore):
     #  查询
     # ═══════════════════════════════════════════════════
 
-    async def search_fts(self, query: str, user_id: str, k: int = 5,
+    async def search_fts(self, query: str, user_id: str | None = None, k: int = 5,
                           imp_weight: float = 0.6, rank_weight: float = 0.4,
                           extra_user_ids: list[str] | None = None) -> list[MemoryAtom]:
         """FTS5 全文搜索（按重要度 × BM25 排序）
 
         Args:
+            user_id: 用户 ID，None 表示搜索所有用户（全局去重用）
             extra_user_ids: 额外搜索的用户 ID，用于搜索关联身份的记忆
         """
         safe_query = self._sanitize_fts_query(query)
         if not safe_query:
             return []
 
-        # 构建用户 ID 条件：主 user_id + 额外 ID
-        all_uids = [user_id]
-        if extra_user_ids:
-            for eid in extra_user_ids:
-                if eid and eid != user_id and eid not in all_uids:
-                    all_uids.append(eid)
-        placeholders = ",".join("?" for _ in all_uids)
-
-        # 多取一些候选，按重要度降序重排，让高重要度的匹配优先
-        candidates = k * 3
-        sql = f"""
-            SELECT a.*, rank FROM memory_atoms a
-            JOIN memory_atoms_fts f ON a.id = f.atom_id
-            WHERE memory_atoms_fts MATCH ? AND a.user_id IN ({placeholders}) AND a.status = 'active'
-            ORDER BY rank
-            LIMIT ?
-        """
-        rows = await self.fetch(sql, (safe_query, *all_uids, candidates))
+        # 构建用户 ID 条件
+        if user_id is None:
+            # 全局搜索（不按用户过滤）
+            candidates = k * 3
+            sql = """
+                SELECT a.*, rank FROM memory_atoms a
+                JOIN memory_atoms_fts f ON a.id = f.atom_id
+                WHERE memory_atoms_fts MATCH ? AND a.status = 'active'
+                ORDER BY rank
+                LIMIT ?
+            """
+            rows = await self.fetch(sql, (safe_query, candidates))
+        else:
+            all_uids = [user_id]
+            if extra_user_ids:
+                for eid in extra_user_ids:
+                    if eid and eid != user_id and eid not in all_uids:
+                        all_uids.append(eid)
+            placeholders = ",".join("?" for _ in all_uids)
+            candidates = k * 3
+            sql = f"""
+                SELECT a.*, rank FROM memory_atoms a
+                JOIN memory_atoms_fts f ON a.id = f.atom_id
+                WHERE memory_atoms_fts MATCH ? AND a.user_id IN ({placeholders}) AND a.status = 'active'
+                ORDER BY rank
+                LIMIT ?
+            """
+            rows = await self.fetch(sql, (safe_query, *all_uids, candidates))
 
         if not rows:
             return []
@@ -395,6 +423,36 @@ class AtomStore(BaseDbStore, MemoryStore):
             "SELECT DISTINCT user_id FROM memory_atoms WHERE status = 'active'"
         )
         return [r[0] for r in rows]
+
+    # ── 原子 ↔ 日记 多对多桥表 ──
+
+    async def link_atom_to_diary(self, atom_id: int, diary_id: int, snippet: str = "", importance: float = 0.5):
+        """将原子关联到日记"""
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO atoms_diary_links (atom_id, diary_id, snippet, importance) VALUES (?,?,?,?)",
+                (atom_id, diary_id, snippet or "", importance),
+            )
+            await db.commit()
+
+    async def get_diaries_by_atom(self, atom_id: int) -> list[dict]:
+        """查询原子关联的所有日记"""
+        rows = await self.fetch("""
+            SELECT d.diary_id, d.snippet, d.importance FROM atoms_diary_links d
+            WHERE d.atom_id = ?
+            ORDER BY d.importance DESC
+        """, (atom_id,))
+        return [{"diary_id": r[0], "snippet": r[1], "importance": r[2]} for r in rows]
+
+    async def get_atoms_by_diary(self, diary_id: int, status: str = "active") -> list[dict]:
+        """查询日记关联的所有原子"""
+        rows = await self.fetch("""
+            SELECT a.* FROM memory_atoms a
+            JOIN atoms_diary_links d ON a.id = d.atom_id
+            WHERE d.diary_id = ? AND a.status = ?
+            ORDER BY d.importance DESC
+        """, (diary_id, status))
+        return [self._row_to_atom(r) for r in rows]
 
     async def get_timeline(
         self, user_id: str, page: int = 1, page_size: int = 20

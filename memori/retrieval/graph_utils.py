@@ -14,24 +14,22 @@ async def fetch_atoms_from_diaries(
     k: int,
     score_multiplier: float = 1.0,
 ) -> list[MemoryAtom]:
-    """从日记 ID 取关联原子
-
-    从 memory_atoms 按 diary_id 查询活跃原子。
-    """
+    """从日记 ID 取关联原子（通过 atoms_diary_links 桥表）"""
     if not diary_ids:
         return []
 
     did_placeholders = ",".join("?" for _ in diary_ids)
     uid_placeholders = ",".join("?" for _ in user_ids)
 
-    order_expr = f"({score_multiplier} * importance) DESC" if score_multiplier != 1.0 else "importance DESC"
+    order_by = "d.importance DESC" if score_multiplier == 1.0 else f"({score_multiplier} * d.importance) DESC"
     try:
         atom_rows = await atom_store.fetch(
-            f"""SELECT * FROM memory_atoms
-                WHERE diary_id IN ({did_placeholders})
-                  AND user_id IN ({uid_placeholders})
-                  AND status = 'active'
-                ORDER BY {order_expr2}
+            f"""SELECT a.* FROM memory_atoms a
+                JOIN atoms_diary_links d ON a.id = d.atom_id
+                WHERE d.diary_id IN ({did_placeholders})
+                  AND a.user_id IN ({uid_placeholders})
+                  AND a.status = 'active'
+                ORDER BY {order_by}
                 LIMIT ?""",
             (*diary_ids, *user_ids, k),
         )

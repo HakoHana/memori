@@ -126,36 +126,43 @@ class Capturer(ICapturer):
             if op_id:
                 await self._store.step_op(op_id, "diary_written")
 
-        # 2a. 去重强化 + 限 5 条
-        existing_count = 0
-        if diary_id > 0:
-            existing_count = await self._store.count_active_atoms(diary_id)
-
-        slots_left = max(0, 5 - existing_count)
-        unique_atoms: list = []
+        # 2a. 全局去重 + 桥表关联（原子事实是全局的，跨用户去重）
+        atoms: list[MemoryAtom] = []
         for atom in raw_atoms:
-            atom.diary_id = diary_id
             atom.prepare_insert()
             if self.lifecycle:
                 matched, ex = await self.lifecycle.dedup_and_reinforce(
-                    atom.content or "", user_id,
+                    atom.content or "", "global",
                     judge_importance=judge_result.importance,
                     new_confidence=atom.confidence,
                 )
-                if matched:
-                    continue  # 已强化已有原子，不插入
-                await self.lifecycle.cleanup_forgotten_duplicates(
-                    atom.content or "", atom.diary_id, [user_id, "Hako"],
-                )
-            if len(unique_atoms) >= slots_left:
-                continue  # 超过 5 条上限，跳过
-            unique_atoms.append(atom)
+                if matched and ex and diary_id > 0:
+                    # 已存在，强化后桥表关联到当前日记
+                    await self._store.atom_store.link_atom_to_diary(
+                        ex.atom_id, diary_id,
+                        snippet=atom.diary_snippet,
+                        importance=atom.importance,
+                    )
+                    continue
+                if not matched:
+                    atoms.append(atom)
+            else:
+                atoms.append(atom)
+            if len(atoms) >= 5:
+                break  # 限 5 条
 
-        atoms = unique_atoms
         if atoms:
             ids = await self._store.insert_atoms(atoms)
             for atom, aid in zip(atoms, ids):
                 atom.atom_id = aid
+                # 新原子桥表关联到当前日记
+                if diary_id > 0:
+                    try:
+                        await self._store.atom_store.link_atom_to_diary(
+                            aid, diary_id, snippet=atom.diary_snippet, importance=atom.importance,
+                        )
+                    except Exception:
+                        pass
             if op_id:
                 await self._store.step_op(op_id, "atoms_stored")
 

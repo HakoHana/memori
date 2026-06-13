@@ -278,23 +278,15 @@ class Retriever(IRetriever):
         )
 
     async def _find_atom_diaries(self, atom: MemoryAtom) -> list[int]:
-        """给定原子，找到所有关联的日记 ID
-
-        通过 memory_atoms 按 content 聚合查找关联日记。
-        """
+        """给定原子，找到所有关联的日记 ID（通过 atoms_diary_links 桥表）"""
         diary_ids: list[int] = []
         seen: set[int] = set()
 
-        if atom.diary_id > 0:
-            diary_ids.append(atom.diary_id)
-            seen.add(atom.diary_id)
-
         try:
             rows = await self.atom_store.fetch(
-                """SELECT DISTINCT diary_id FROM memory_atoms
-                   WHERE content = ? AND diary_id != ? AND diary_id > 0
-                   ORDER BY importance DESC LIMIT 5""",
-                (atom.content, atom.diary_id),
+                """SELECT diary_id, importance FROM atoms_diary_links
+                   WHERE atom_id = ? ORDER BY importance DESC LIMIT 10""",
+                (atom.atom_id,),
             )
             for r in rows:
                 did = r[0]

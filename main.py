@@ -301,10 +301,11 @@ class MemoriPlugin(Star):
                         except Exception:
                             pass
 
-                    # 累计一轮对话 → 可能触发整理
+                    # 累计一轮对话 → 可能触发整理（从 DB 拉上下文）
                     try:
-                        hot_ctx = hc.format_recent_context(uid, limit=10, bot_name=bot_name)
-                        await self.core.consolidation_manager.on_round_complete(uid, hot_ctx)
+                        await self.core.consolidation_manager.on_round_complete(
+                            uid, session_id=event.unified_msg_origin,
+                        )
                     except Exception:
                         pass
         except Exception as e:

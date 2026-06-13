@@ -362,6 +362,7 @@ class MemoryCore:
             state_store=self.state_store,
             hot_cache=self.hot_cache,
             warm_processor=self.warm_processor,
+            conversation_store=self.conversation_store,
             config=self.config,
         )
         await self.consolidation_manager.initialize()

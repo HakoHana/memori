@@ -273,7 +273,7 @@ class IConsolidationManager(ABC):
         ...
 
     @abstractmethod
-    async def on_round_complete(self, user_id: str, conversation_text: str = ""):
+    async def on_round_complete(self, user_id: str, session_id: str = ""):
         """Bot 完成一轮对话后调用：累计轮数 → 达阈值触发整理"""
         ...
 

@@ -39,12 +39,13 @@ class ConsolidationManager(IConsolidationManager):
         state_store: StateStore,
         hot_cache: IHotMessageCache | None = None,
         warm_processor=None,
+        conversation_store=None,
         config: dict[str, Any] | None = None,
     ):
         self.state_store = state_store
         self.hot_cache = hot_cache
         self.warm_processor = warm_processor
-        self.config = config or {}
+        self.conversation_store = conversation_store
 
         # 配置
         self._round_threshold = self.config.get("consolidation_rounds", 10)  # 每 N 轮 bot 对话触发一次
@@ -115,12 +116,12 @@ class ConsolidationManager(IConsolidationManager):
     #  A. 主触发：on_round_complete（bot 回复后调用）
     # ═══════════════════════════════════════════════════
 
-    async def on_round_complete(self, user_id: str, conversation_text: str = ""):
+    async def on_round_complete(self, user_id: str, session_id: str = ""):
         """Bot 完成一轮对话后调用，累计轮数并在达到阈值时触发整理
 
         Args:
             user_id: 用户 ID
-            conversation_text: 本轮对话文本（热缓存自动获取，可不传）
+            session_id: 会话 ID，用于从 conversations.db 拉上下文
         """
         if self._destroyed:
             return
@@ -146,7 +147,18 @@ class ConsolidationManager(IConsolidationManager):
             logger.debug(f"[Memory] 全局限速: 距上次 {now - self._global_last_consolidation:.0f}s")
             return
 
-        conv_text = conversation_text or self._get_hot_context(user_id)
+        # 从 conversations.db 拉取完整上下文（后台异步操作，不依赖热缓存）
+        conv_text = ""
+        if session_id and self.conversation_store:
+            try:
+                conv_text = await self.conversation_store.get_recent_context(
+                    session_id, limit=50,
+                )
+            except Exception:
+                pass
+        if not conv_text:
+            conv_text = self._get_hot_context(user_id)
+
         logger.info(f"[Memory] 对话轮数触发整理: uid={user_id}, rounds={state.msg_count}")
         if self.warm_processor:
             await self.warm_processor.enqueue(user_id, conv_text, state, on_done=self._after_consolidation)

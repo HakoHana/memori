@@ -305,7 +305,6 @@ async def get_stats(core: MemoryCore = Depends(get_core)):
         "users": (await core.atom_store.fetchone("SELECT COUNT(DISTINCT uid) FROM user_persona"))[0] or 0,
         "diaries": (await core.diary_store.fetchone("SELECT COUNT(*) FROM diary_entries"))[0] or 0,
         "atoms": (await core.atom_store.fetchone("SELECT COUNT(*) FROM memory_atoms WHERE status='active'"))[0] or 0,
-        "facts": (await core.atom_store.fetchone("SELECT COUNT(*) FROM atomic_facts"))[0] or 0,
         "graph_nodes": (await core.graph_store.fetchone("SELECT COUNT(*) FROM nodes"))[0] or 0,
         "graph_edges": (await core.graph_store.fetchone("SELECT COUNT(*) FROM edges WHERE status='active'"))[0] or 0,
     }

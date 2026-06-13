@@ -122,8 +122,6 @@ class MockAtomStore:
         self.fetchone = AsyncMock(return_value=None)
         self.execute = AsyncMock()
         self.touch = AsyncMock()
-        self.ensure_fact = AsyncMock(return_value=1)
-        self.link_fact = AsyncMock()
         self.get_related_user_ids = AsyncMock(return_value=[])
         self.get_by_user = AsyncMock(return_value=[])
         self.get_all_active_user_ids = AsyncMock(return_value=[])
@@ -235,8 +233,6 @@ def mock_memory_uow(mock_atom_store, mock_diary_store, mock_write_op_log):
     atom_store.execute = mock_atom_store.execute
     atom_store.search_fts = mock_atom_store.search_fts
     atom_store.insert_many = mock_atom_store.insert_many
-    atom_store.ensure_fact = mock_atom_store.ensure_fact
-    atom_store.link_fact = mock_atom_store.link_fact
     atom_store._row_to_atom = MagicMock()
 
     log = MagicMock()

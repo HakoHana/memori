@@ -65,12 +65,11 @@ class PageService:
             user_count = (await self._db.fetchone("SELECT COUNT(DISTINCT uid) FROM user_persona"))[0] or 0
             diary_count = (await self._db_diary.fetchone("SELECT COUNT(*) FROM diary_entries"))[0] or 0
             atom_count = (await self._db.fetchone("SELECT COUNT(*) FROM memory_atoms WHERE status='active'"))[0] or 0
-            fact_count = (await self._db.fetchone("SELECT COUNT(*) FROM atomic_facts"))[0] or 0
             node_count = (await self._db_graph.fetchone("SELECT COUNT(*) FROM nodes"))[0] or 0
             edge_count = (await self._db_graph.fetchone("SELECT COUNT(*) FROM edges WHERE status='active'"))[0] or 0
             return self._ok({
                 "users": user_count, "diaries": diary_count,
-                "atoms": atom_count, "facts": fact_count,
+                "atoms": atom_count,
                 "graph_nodes": node_count, "graph_edges": edge_count,
             })
         except Exception as e:
@@ -154,12 +153,6 @@ class PageService:
                 (entry_id,),
             )
             diary["atoms"] = [{"id": a[0], "content": a[1], "type": a[2], "importance": a[3]} for a in atoms]
-            facts = await self._db.fetch("""
-                SELECT af.id, af.content, af.atom_type, af.importance, dfl.snippet
-                FROM atomic_facts af JOIN diary_fact_links dfl ON dfl.fact_id = af.id
-                WHERE dfl.diary_id = ?
-            """, (entry_id,))
-            diary["facts"] = [{"id": f[0], "content": f[1], "type": f[2], "importance": f[3], "snippet": f[4]} for f in facts]
             return self._ok(diary)
         except Exception as e:
             return self._error(str(e))

@@ -26,7 +26,7 @@ from .base_store import BaseDbStore
 # ── 当前 schema 版本 ──────────────────────────────────────
 # 升级此值表示有一套新的迁移要跑。
 # 迁移方法名必须为 _migrate_v{version} 或 _migrate_{scope}_v{version}。
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 
 # ── 每类数据库的 schema 版本（默认 0 表示由 Store.initialize() 统一建表） ──
 VERSIONS: dict[str, int] = {
@@ -64,7 +64,7 @@ class DBMigration(BaseDbStore):
     """管理数据库 schema 版本迁移
 
     支持按 scope 区分不同数据库的迁移版本：
-    - memory: 主数据库（memory_atoms、atomic_facts、user_persona、write_ops 等）
+    - memory: 主数据库（memory_atoms、user_persona、write_ops 等）
     - diaries: 日记数据库（diary_entries、diary_fts）
     - conversations: 会话数据库（sessions、messages）
     - graph: 图谱数据库（graph_nodes、graph_edges、entity_cooccur）
@@ -224,10 +224,6 @@ class DBMigration(BaseDbStore):
                     "created_at", "last_accessed_at", "ttl_days", "expires_at",
                     "decay_type", "status", "session_id", "diary_ref",
                     "diary_snippet", "embedding", "embedding_model", "metadata",
-                ],
-                "atomic_facts": [
-                    "id", "content", "atom_type", "importance", "confidence",
-                    "source_count", "created_at", "updated_at",
                 ],
                 "user_persona": [
                     "uid", "summary", "full_markdown", "known_ids", "primary_name",
@@ -394,3 +390,19 @@ class DBMigration(BaseDbStore):
             logger.info(f"[Migration] v3 schema 校验完成: {verification['_summary']}")
         except Exception as e:
             logger.warning(f"[Migration] v3 schema 校验异常: {e}")
+
+    async def _migrate_v4(self):
+        """
+        v4: 删除冗余的 atomic_facts 和 diary_fact_links 表
+
+        功能已由 memory_atoms 完整覆盖，不再需要独立的全局事实表。
+        DROP 前不做备份，数据已在 memory_atoms 中有完整副本。
+        """
+        async with self._connect() as db:
+            for tbl in ("diary_fact_links", "atomic_facts"):
+                try:
+                    await db.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception:
+                    pass
+            await db.commit()
+        logger.info("[Migration] v4 完成: 已删除 atomic_facts / diary_fact_links")

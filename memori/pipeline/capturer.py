@@ -159,32 +159,6 @@ class Capturer(ICapturer):
             if op_id:
                 await self._store.step_op(op_id, "atoms_stored")
 
-            # 同步写入全局事实表（去重）
-            if diary_id > 0:
-                max_imp = 0.5
-                for atom in atoms:
-                    try:
-                        fact_id = await self._store.ensure_fact(
-                            content=atom.content,
-                            atom_type=atom.atom_type.value,
-                            importance=atom.importance,
-                            confidence=atom.confidence,
-                        )
-                        await self._store.link_fact(
-                            diary_id=diary_id,
-                            fact_id=fact_id,
-                            importance=atom.importance,
-                            snippet=atom.diary_snippet,
-                        )
-                        if atom.importance > max_imp:
-                            max_imp = atom.importance
-                    except Exception:
-                        pass
-                try:
-                    await self._store.update_diary_importance(user_id, today, importance=max_imp)
-                except Exception:
-                    pass
-
         # 3. 异步更新图谱（fire-and-forget，不阻塞 capture 返回）
         #    图谱是 diary 写入的副产物，不需要等待
         if diary_id > 0 and self.on_atoms_created:

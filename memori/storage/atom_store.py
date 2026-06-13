@@ -74,38 +74,6 @@ class AtomStore(BaseDbStore, MemoryStore):
             except Exception:
                 pass
 
-            # 全局事实表 + 日记关联表（v4 去重架构）
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS atomic_facts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content TEXT NOT NULL,
-                    atom_type TEXT NOT NULL DEFAULT 'unknown',
-                    importance REAL NOT NULL DEFAULT 0.5,
-                    confidence REAL NOT NULL DEFAULT 0.7,
-                    source_count INTEGER NOT NULL DEFAULT 1,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                )
-            """)
-            await db.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_af_content ON atomic_facts(content)"
-            )
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS diary_fact_links (
-                    diary_id INTEGER NOT NULL,
-                    fact_id INTEGER NOT NULL,
-                    importance REAL DEFAULT 0.5,
-                    snippet TEXT DEFAULT '',
-                    PRIMARY KEY (diary_id, fact_id)
-                )
-            """)
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_dfl_diary ON diary_fact_links(diary_id)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_dfl_fact ON diary_fact_links(fact_id)"
-            )
-
             # 用户注册表（user_id → 可读名字）
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_registry (
@@ -525,62 +493,6 @@ class AtomStore(BaseDbStore, MemoryStore):
             "UPDATE memory_atoms SET importance = importance * ? WHERE status = 'active'",
             (decay_rate,),
         )
-
-    # ═══════════════════════════════════════════════════
-    #  全局事实（去重架构 v4）
-    # ═══════════════════════════════════════════════════
-
-    async def ensure_fact(self, content: str, atom_type: str = "unknown",
-                          importance: float = 0.5, confidence: float = 0.7) -> int:
-        """插入或查找全局事实，返回 fact_id"""
-        import time
-        now = time.time()
-        async with self._connect() as db:
-            row = await db.execute_fetchall(
-                "SELECT id, source_count FROM atomic_facts WHERE content = ?",
-                (content,),
-            )
-            if row:
-                fact_id, count = row[0]
-                new_imp = min(1.0, importance + 0.05)
-                await db.execute(
-                    "UPDATE atomic_facts SET importance=?, source_count=source_count+1, updated_at=? WHERE id=?",
-                    (new_imp, now, fact_id),
-                )
-            else:
-                cursor = await db.execute(
-                    "INSERT INTO atomic_facts (content, atom_type, importance, confidence, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-                    (content, atom_type, importance, confidence, now, now),
-                )
-                fact_id = cursor.lastrowid
-            await db.commit()
-        return fact_id
-
-    async def link_fact(self, diary_id: int, fact_id: int, importance: float = 0.5, snippet: str = ""):
-        """关联日记 → 事实"""
-        async with self._connect() as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO diary_fact_links (diary_id, fact_id, importance, snippet) VALUES (?,?,?,?)",
-                (diary_id, fact_id, importance, snippet),
-            )
-            await db.commit()
-
-    async def get_facts_by_diary(self, diary_id: int) -> list[dict]:
-        """查询日记关联的所有事实"""
-        rows = await self.fetch("""
-            SELECT af.id, af.content, af.atom_type, af.importance, af.confidence,
-                   dfl.importance as link_imp, dfl.snippet
-            FROM atomic_facts af
-            JOIN diary_fact_links dfl ON af.id = dfl.fact_id
-            WHERE dfl.diary_id = ?
-            ORDER BY dfl.importance DESC
-        """, (diary_id,))
-        return [
-            {"id": r[0], "content": r[1], "type": r[2],
-             "importance": r[3], "confidence": r[4],
-             "link_importance": r[5], "snippet": r[6] or ""}
-            for r in rows
-        ]
 
     # ═══════════════════════════════════════════════════
     #  用户注册表

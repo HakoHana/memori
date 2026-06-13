@@ -30,8 +30,6 @@ class TestMemoryUnitOfWorkDiary:
         atom.execute = AsyncMock()
         atom.search_fts = AsyncMock(return_value=[])
         atom.insert_many = AsyncMock(return_value=[1, 2])
-        atom.ensure_fact = AsyncMock(return_value=1)
-        atom.link_fact = AsyncMock()
         log = MagicMock()
         return MemoryUnitOfWork(diary_store=diary, atom_store=atom, write_op_log=log)
 
@@ -89,8 +87,6 @@ class TestMemoryUnitOfWorkAtomWrite:
     def uow(self):
         atom = MagicMock()
         atom.insert_many = AsyncMock(return_value=[10, 11])
-        atom.ensure_fact = AsyncMock(return_value=1)
-        atom.link_fact = AsyncMock()
         atom.execute = AsyncMock()
         atom.fetchone = AsyncMock(side_effect=[
             (5,),  # fetch_atom_diary 返回 diary_id=5
@@ -135,28 +131,6 @@ class TestMemoryUnitOfWorkAtomWrite:
         calls = uow._atom.execute.await_args_list
         assert any("DELETE FROM memory_atoms" in c[0][0] for c in calls)
         assert any("DELETE FROM memory_atoms_fts" in c[0][0] for c in calls)
-
-
-class TestMemoryUnitOfWorkFacts:
-    """事实表门面"""
-
-    @pytest.fixture
-    def uow(self):
-        atom = MagicMock()
-        atom.ensure_fact = AsyncMock(return_value=42)
-        atom.link_fact = AsyncMock()
-        diary = MagicMock()
-        log = MagicMock()
-        return MemoryUnitOfWork(diary_store=diary, atom_store=atom, write_op_log=log)
-
-    async def test_ensure_fact(self, uow):
-        fact_id = await uow.ensure_fact("内容", "episodic", 0.8, 0.9)
-        assert fact_id == 42
-        uow._atom.ensure_fact.assert_awaited_once_with("内容", "episodic", 0.8, 0.9)
-
-    async def test_link_fact(self, uow):
-        await uow.link_fact(1, 42, 0.8, "片段")
-        uow._atom.link_fact.assert_awaited_once_with(1, 42, 0.8, "片段")
 
 
 class TestMemoryUnitOfWorkWriteLog:

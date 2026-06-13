@@ -48,11 +48,6 @@ class DecayEngine:
         )
         count = cursor.rowcount if cursor else 0
 
-        # 同步衰减事实表（保留低值底线 0.1）
-        await self.atom_store.execute(
-            f"UPDATE atomic_facts SET importance = importance * {rate} WHERE importance > 0.1"
-        )
-
         return count
 
     async def apply_social_decay(self, graph_engine, days_since: int = 7) -> int:

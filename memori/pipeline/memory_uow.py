@@ -136,28 +136,6 @@ class MemoryUnitOfWork:
         """写入单条原子的 embedding 向量"""
         await self._atom.update_embedding(atom_id, embedding, model_name)
 
-    # ── 事实表 ──
-
-    async def ensure_fact(
-        self,
-        content: str,
-        atom_type: str,
-        importance: float,
-        confidence: float,
-    ) -> int:
-        """确保全局事实存在，返回 fact_id"""
-        return await self._atom.ensure_fact(content, atom_type, importance, confidence)
-
-    async def link_fact(
-        self,
-        diary_id: int,
-        fact_id: int,
-        importance: float,
-        snippet: str,
-    ):
-        """将事实关联到日记"""
-        await self._atom.link_fact(diary_id, fact_id, importance, snippet)
-
     # ── 写操作日志 ──
 
     async def begin_op(self, operation: str, data: dict) -> str | None:

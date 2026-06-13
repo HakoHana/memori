@@ -124,14 +124,28 @@ class LifecycleManager:
     # ── 日常任务 ─────────────────────────────────────────
 
     async def run_daily_decay(self):
-        """每日衰减 + 过期清理"""
-        # 全局衰减
+        """每日衰减 + 过期清理（状态机接入前暂放于此）
+
+        状态机接入后由此接口转交梦境状态机调度。
+        """
         count = await self.decay.apply_global_decay()
         if count > 0:
             logger.info(f"[Lifecycle] 全局衰减完成: {count} 条")
-
-        # 过期清理
         await self.run_daily_cleanup()
+
+    async def scan_contradictions(self, user_id: str | None = None) -> list[dict]:
+        """扫描矛盾记忆 — 接口预留供梦境状态机使用
+
+        发现矛盾后 Bot 可在下次对话中提问澄清。
+        当前为占位实现，状态机接入后重写此方法。
+
+        Args:
+            user_id: 指定用户，None=全库扫描
+
+        Returns:
+            [{"atom_a": ..., "atom_b": ..., "topic": "...", "conflict_type": "..."}, ...]
+        """
+        return []
 
     async def run_daily_archive(self):
         """每日归档（冷存储 → Markdown）"""

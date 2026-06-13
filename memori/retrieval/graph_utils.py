@@ -14,9 +14,9 @@ async def fetch_atoms_from_diaries(
     k: int,
     score_multiplier: float = 1.0,
 ) -> list[MemoryAtom]:
-    """从日记 ID 取关联原子，支持分数加权
+    """从日记 ID 取关联原子
 
-    优先从 atomic_facts 取（语义化），回退到 memory_atoms（原始原子）。
+    从 memory_atoms 按 diary_id 查询活跃原子。
     """
     if not diary_ids:
         return []
@@ -24,27 +24,7 @@ async def fetch_atoms_from_diaries(
     did_placeholders = ",".join("?" for _ in diary_ids)
     uid_placeholders = ",".join("?" for _ in user_ids)
 
-    order_expr = f"({score_multiplier} * af.importance) DESC" if score_multiplier != 1.0 else "af.importance DESC"
-
-    # 路径 A：通过 diary_fact_links → atomic_facts
-    try:
-        fact_rows = await atom_store.fetch(
-            f"""SELECT DISTINCT af.id, af.content, af.atom_type,
-                       af.importance, af.confidence, af.created_at
-                FROM atomic_facts af
-                JOIN diary_fact_links dfl ON af.id = dfl.fact_id
-                WHERE dfl.diary_id IN ({did_placeholders})
-                ORDER BY {order_expr}
-                LIMIT ?""",
-            (*diary_ids, k * 2),
-        )
-        if fact_rows:
-            return [_fact_row_to_atom(r, user_ids[0]) for r in fact_rows[:k]]
-    except Exception:
-        pass
-
-    # 路径 B：回退到 memory_atoms
-    order_expr2 = f"({score_multiplier} * importance) DESC" if score_multiplier != 1.0 else "importance DESC"
+    order_expr = f"({score_multiplier} * importance) DESC" if score_multiplier != 1.0 else "importance DESC"
     try:
         atom_rows = await atom_store.fetch(
             f"""SELECT * FROM memory_atoms
@@ -93,15 +73,3 @@ async def find_linked_diaries(graph_store: Any, node_ids: list[str]) -> list[int
         return []
 
 
-def _fact_row_to_atom(row, user_id: str) -> MemoryAtom:
-    """将 atomic_facts 行包装为 MemoryAtom（兼容下游接口）"""
-    return MemoryAtom(
-        atom_id=row[0],
-        user_id=user_id,
-        diary_date="",
-        content=row[1],
-        atom_type=AtomType(row[2]) if row[2] else AtomType.factual,
-        importance=float(row[3]) if row[3] else 0.5,
-        confidence=float(row[4]) if row[4] else 0.8,
-        created_at=float(row[5]) if row[5] else 0.0,
-    )

@@ -64,9 +64,6 @@ class TestCaptureDataFlow:
         atom_store.fetchone = AsyncMock(return_value=None)
         atom_store.fetch = AsyncMock(return_value=[])
         atom_store.search_fts = AsyncMock(return_value=[])
-        atom_store.ensure_fact = AsyncMock(return_value=1)
-        atom_store.link_fact = AsyncMock()
-
         log = MagicMock()
         log.begin = AsyncMock(return_value="op_1")
         log.step = AsyncMock()
@@ -112,11 +109,9 @@ class TestCaptureDataFlow:
         log.complete.assert_awaited_once()
 
     async def test_fact_table_flow(self):
-        """验证原子写入后同步到事实表"""
+        """验证原子写入后同步到事实表（已移除 atomic_facts，仅验证不抛异常）"""
         atom_store = MagicMock()
         atom_store.insert_many = AsyncMock(return_value=[1])
-        atom_store.ensure_fact = AsyncMock(return_value=10)
-        atom_store.link_fact = AsyncMock()
         atom_store.execute = AsyncMock()
         atom_store.fetchone = AsyncMock(return_value=None)
         atom_store.fetch = AsyncMock(return_value=[])
@@ -141,8 +136,6 @@ class TestCaptureDataFlow:
         judge = CaptureJudgeResult(should_remember=True, importance=0.9, mood="happy", context_summary="s")
         result = await c.capture("user1", "对话", judge)
 
-        # 验证 ensure_fact 和 link_fact 被调用
-        assert atom_store.ensure_fact.await_count >= 0  # 至少不抛异常
 
 
 class TestRetrievalDataFlow:
@@ -299,9 +292,6 @@ class TestGraphIndexDataFlow:
         atom_store.fetchone = AsyncMock(return_value=None)
         atom_store.fetch = AsyncMock(return_value=[])
         atom_store.search_fts = AsyncMock(return_value=[])
-        atom_store.ensure_fact = AsyncMock(return_value=1)
-        atom_store.link_fact = AsyncMock()
-
         diary = MagicMock()
         diary.append = AsyncMock(return_value=42)
         diary.update_metadata = AsyncMock()

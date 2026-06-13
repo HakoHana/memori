@@ -81,16 +81,22 @@ class MemoriPlugin(Star):
         except Exception as e:
             logger.warning(f"[memori] 同步 LLM 提供商失败: {e}")
 
-        # 注册 Agent Tools
+        # 注册 Agent Tools（受配置开关控制）
         try:
-            recall_tool = RecallTool()
-            recall_tool.set_core(self.core)
-            memorize_tool = MemorizeTool()
-            memorize_tool.set_core(self.core)
-            self.context.add_llm_tools(recall_tool, memorize_tool)
-            self.context.activate_llm_tool("recall_long_term_memory")
-            self.context.activate_llm_tool("memorize_long_term_memory")
-            logger.info("[memori] Agent Tools 已注册")
+            tools = []
+            if self.config.get("agent_recall_tool_enabled", True):
+                recall_tool = RecallTool()
+                recall_tool.set_core(self.core)
+                tools.append(recall_tool)
+                self.context.activate_llm_tool("recall_long_term_memory")
+            if self.config.get("agent_memorize_tool_enabled", False):
+                memorize_tool = MemorizeTool()
+                memorize_tool.set_core(self.core)
+                tools.append(memorize_tool)
+                self.context.activate_llm_tool("memorize_long_term_memory")
+            if tools:
+                self.context.add_llm_tools(*tools)
+                logger.info(f"[memori] Agent Tools 已注册: {len(tools)} 个")
         except Exception as e:
             logger.warning(f"[memori] 注册 Agent Tools 失败: {e}")
 

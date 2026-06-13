@@ -397,6 +397,10 @@ _CONFIG_META = {
                         "hint": "关闭后日记永不归档，永久保留在主数据库"},
     "archive_path": {"type": "string", "default": "./memory_archive", "label": "归档目录", "group": "归档",
                      "hint": "归档 Markdown 文件输出目录，相对于 data_dir"},
+    "agent_recall_tool_enabled": {"type": "bool", "default": True, "label": "启用主动回忆工具", "group": "Agent",
+                                   "hint": "开启后注册 recall_long_term_memory，允许 Agent 主动检索长期记忆"},
+    "agent_memorize_tool_enabled": {"type": "bool", "default": False, "label": "启用主动记忆写入工具", "group": "Agent",
+                                     "hint": "开启后注册 memorize_long_term_memory，允许 Agent 主动写入长期记忆"},
 }
 
 

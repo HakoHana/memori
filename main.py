@@ -200,15 +200,7 @@ class MemoriPlugin(Star):
             except Exception:
                 pass
 
-        # 写入热缓存（source of truth），conversations.db 由定时 flush 写入
-        hc = self.core.hot_cache
-        if hc and raw_text:
-            sid = await self.core.conversation_store.get_session_id(event)
-            hc.push(
-                user_id=uid, role="user", content=raw_text,
-                sender_name=sender_name, session_id=sid,
-            )
-
+        # 热缓存由 process_message 内部推入，此处不再重复 push
         system_prompt = getattr(event, "system_prompt", "") or ""
         result = await self.core.process_message(
             user_id=uid,

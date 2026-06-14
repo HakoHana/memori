@@ -394,7 +394,7 @@
   function refreshDynamicI18n() {
     if (state.page === "memory") {
       if (state.memory.items.length) renderMemoriesVirtual();
-      else renderEmptyTable();
+      else renderMemoriesVirtual();
       updateMemoryPagination();
       updateBatchBar();
     }
@@ -949,11 +949,8 @@
   }
 
   /* ================================================================
-     Memory Page — Virtual Scrolling
+     Memory Page — Card Waterfall
      ================================================================ */
-  var ROW_HEIGHT = 56;
-  var SCROLL_BUFFER = 15;
-
   async function fetchMemories() {
     var params = new URLSearchParams();
     params.set("page", String(state.memory.page));
@@ -991,100 +988,64 @@
       renderMemoriesVirtual({ resetScroll: true });
       updateMemoryPagination();
       updateBatchBar();
-      syncSelectAllCheckbox();
     } catch (e) {
       showToast(e.message || "加载失败", true);
-      renderEmptyTable();
+      var list = document.getElementById("memories-list");
+      if (list) list.innerHTML = '<div class="mem-card-empty">' + window.t("table.noData") + '</div>';
     }
   }
 
   function renderMemoriesVirtual(options) {
     options = options || {};
-    var tbody = document.getElementById("memories-body");
-    var scrollEl = document.getElementById("memories-scroll");
-    if (!state.memory.items.length) { renderEmptyTable(); return; }
+    var list = document.getElementById("memories-list");
+    var empty = document.getElementById("memories-empty");
+    if (!list) return;
+    if (!state.memory.items.length) {
+      list.innerHTML = '<div class="mem-card-empty">' + window.t("table.noData") + '</div>';
+      return;
+    }
 
-    var totalHeight = state.memory.items.length * ROW_HEIGHT;
-    if (scrollEl && options.resetScroll) scrollEl.scrollTop = 0;
-
-    function renderSlice() {
-      var scrollTop = scrollEl ? scrollEl.scrollTop : 0;
-      var viewHeight = scrollEl ? scrollEl.clientHeight : 600;
-      var start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - SCROLL_BUFFER);
-      var end = Math.min(state.memory.items.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + SCROLL_BUFFER);
-      var padTop = start * ROW_HEIGHT;
-      var padBottom = totalHeight - end * ROW_HEIGHT;
-
-      var html = "";
-      for (var i = start; i < end; i++) {
-        var item = state.memory.items[i];
-        var key = "m:" + item.memory_id;
-        var sel = state.memory.selected.has(key) ? " selected" : "";
-        var imp = item.importance != null ? Number(item.importance).toFixed(1) : "5.0";
-        var impNum = Math.min(10, Math.max(0, parseFloat(imp) || 0));
-        var impCls = impNum >= 7 ? "high" : impNum >= 4 ? "medium" : "low";
-        html += '<tr data-key="' + key + '" class="' + sel + '" style="height:' + ROW_HEIGHT + 'px">' +
-          '<td class="cell-check"><input type="checkbox" class="memory-row-check" data-key="' + key + '"' + (sel ? " checked" : "") + ' aria-label="' + esc(window.t("table.selectMemory", item.memory_id)) + '" /></td>' +
-          '<td class="cell-mono cell-id">' + item.memory_id + '</td>' +
-          '<td class="cell-summary"><div class="memory-summary-text">' + esc(item.summary || "") + '</div><div class="memory-summary-meta">' + esc(window.t("table.updated", item.updated_at || "--")) + '</div></td>' +
-          '<td class="cell-type"><span class="type-tag">' + esc(item.memory_type || "GENERAL") + '</span></td>' +
-          '<td class="cell-importance"><div class="importance-bar"><div class="importance-bar-track">' +
-          '<div class="importance-bar-fill ' + impCls + '" style="width:' + (impNum * 10) + '%"></div></div>' +
-          '<span style="font-size:12px;color:var(--text-secondary)">' + imp + '</span></div></td>' +
-          '<td class="cell-status">' + statusPill(item.status) + '</td>' +
-          '<td class="cell-created text-secondary" style="font-size:12px">' + esc(item.created_at) + '</td>' +
-          '</tr>';
+    var html = "";
+    for (var i = 0; i < state.memory.items.length; i++) {
+      var item = state.memory.items[i];
+      var key = "m:" + item.memory_id;
+      var sel = state.memory.selected.has(key);
+      var imp = item.importance != null ? Number(item.importance).toFixed(1) : "5.0";
+      var impNum = Math.min(10, Math.max(0, parseFloat(imp) || 0));
+      var impCls = impNum >= 7 ? "high" : impNum >= 4 ? "medium" : "low";
+      var dateStr = item.created_at || "";
+      // 提取类型标签
+      var typeTags = "";
+      if (item.types && item.types.length) {
+        typeTags = item.types.map(function(t) {
+          var tc = (t.type || "").toLowerCase();
+          return '<span class="mem-card-tag type-' + tc + '">' + esc(t.type) + '</span>';
+        }).join(" ");
       }
-
-      tbody.innerHTML = html;
-      tbody.style.paddingTop = padTop + "px";
-      tbody.style.paddingBottom = padBottom + "px";
+      html += '<div class="mem-card" data-key="' + key + '">' +
+        '<div class="mem-card-importance ' + impCls + '"></div>' +
+        '<div class="mem-card-top">' +
+        '<div class="mem-card-summary">' + esc(item.summary || item.content || "") + '</div>' +
+        '</div>' +
+        '<div class="mem-card-bottom">' +
+        '<span class="mem-card-date">' + esc(dateStr) + '</span>' +
+        '<div class="mem-card-tags">' + typeTags + '</div>' +
+        '</div>' +
+        '</div>';
     }
+    list.innerHTML = html;
 
-    if (scrollEl && !scrollEl._virtualScrollBound) {
-      scrollEl._virtualScrollBound = true;
-      scrollEl.addEventListener("scroll", function() {
-        window.requestAnimationFrame(renderSlice);
-      }, { passive: true });
-    }
-
-    renderSlice();
-  }
-
-  function renderEmptyTable() {
-    var tbody = document.getElementById("memories-body");
-    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">' + window.t("table.noData") + '</td></tr>';
-    tbody.style.paddingTop = "0";
-    tbody.style.paddingBottom = "0";
+    // 点击卡片 → 显示详情
+    list.querySelectorAll(".mem-card").forEach(function(card) {
+      card.addEventListener("click", function() {
+        var item = getMemoryItemByKey(this.dataset.key);
+        if (item) renderPeekMemory(item);
+      });
+    });
   }
 
   function getMemoryItemByKey(key) {
     return state.memory.items.find(function(i) { return ("m:" + i.memory_id) === key; });
-  }
-
-  function onMemoryCheckboxClick(row, event) {
-    event.stopPropagation();
-    var key = row.dataset.key;
-    if (event.shiftKey && state._lastClickedKey) {
-      var keys = state.memory.items.map(function(i) { return "m:" + i.memory_id; });
-      var a = keys.indexOf(state._lastClickedKey);
-      var b = keys.indexOf(key);
-      if (a !== -1 && b !== -1) {
-        var lo = Math.min(a, b);
-        var hi = Math.max(a, b);
-        for (var i = lo; i <= hi; i++) state.memory.selected.add(keys[i]);
-      }
-    } else {
-      if (state.memory.selected.has(key)) {
-        state.memory.selected.delete(key);
-      } else {
-        state.memory.selected.add(key);
-      }
-    }
-    state._lastClickedKey = key;
-    renderMemoriesVirtual();
-    updateBatchBar();
-    syncSelectAllCheckbox();
   }
 
   function updateBatchBar() {
@@ -1092,7 +1053,6 @@
     var count = state.memory.selected.size;
     document.getElementById("batch-count").textContent = window.t("filter.selectedCount", count);
     bar.classList.toggle("visible", count > 0);
-    syncSelectAllCheckbox();
   }
 
   function updateMemoryPagination() {
@@ -1173,43 +1133,14 @@
     }
   }
 
-  function syncSelectAllCheckbox() {
-    var checkbox = document.getElementById("mem-select-page");
-    if (!checkbox) return;
-    var total = state.memory.items.length;
-    var selected = state.memory.items.filter(function(item) {
-      return state.memory.selected.has("m:" + item.memory_id);
-    }).length;
-    checkbox.checked = total > 0 && selected === total;
-    checkbox.indeterminate = selected > 0 && selected < total;
-  }
-
   function initMemoryPage() {
-    var tbody = document.getElementById("memories-body");
-    if (tbody) {
-      tbody.addEventListener("click", function(e) {
-        var tr = e.target.closest("tr");
-        if (!tr || !tr.dataset.key) return;
-        var checkbox = e.target.closest(".memory-row-check");
-        if (checkbox) {
-          onMemoryCheckboxClick(tr, e);
-          return;
-        }
-        var item = getMemoryItemByKey(tr.dataset.key);
+    var list = document.getElementById("memories-list");
+    if (list) {
+      list.addEventListener("click", function(e) {
+        var card = e.target.closest(".mem-card");
+        if (!card || !card.dataset.key) return;
+        var item = getMemoryItemByKey(card.dataset.key);
         if (item) renderPeekMemory(item);
-      });
-    }
-
-    var selectPage = document.getElementById("mem-select-page");
-    if (selectPage) {
-      selectPage.addEventListener("change", function() {
-        state.memory.items.forEach(function(item) {
-          var key = "m:" + item.memory_id;
-          if (selectPage.checked) state.memory.selected.add(key);
-          else state.memory.selected.delete(key);
-        });
-        renderMemoriesVirtual();
-        updateBatchBar();
       });
     }
 
@@ -1218,20 +1149,6 @@
       state.memory.page = 1;
       fetchMemories();
     }, 300));
-
-    var memSession = document.getElementById("mem-session");
-    if (memSession) memSession.addEventListener("input", debounce(function() {
-      state.memory.session = this.value.trim();
-      state.memory.page = 1;
-      fetchMemories();
-    }, 300));
-
-    var memStatus = document.getElementById("mem-status");
-    if (memStatus) memStatus.addEventListener("change", function() {
-      state.memory.status = this.value;
-      state.memory.page = 1;
-      fetchMemories();
-    });
 
     document.getElementById("mem-page-size").addEventListener("change", function() {
       state.memory.pageSize = parseInt(this.value) || 20;
@@ -1244,14 +1161,6 @@
     });
     document.getElementById("mem-next").addEventListener("click", function() {
       if (state.memory.hasMore) { state.memory.page++; fetchMemories(); }
-    });
-    document.getElementById("batch-delete").addEventListener("click", batchDelete);
-    var batchArchiveBtn = document.getElementById("batch-archive");
-    if (batchArchiveBtn) batchArchiveBtn.addEventListener("click", batchArchive);
-    document.getElementById("batch-clear").addEventListener("click", function() {
-      state.memory.selected.clear();
-      renderMemoriesVirtual();
-      updateBatchBar();
     });
   }
 
@@ -1490,10 +1399,57 @@
       });
 
       fetchGraphStats();
+      startHealthPolling();
       switchPage("graph");
     } catch (e) {
       console.error("Init error:", e);
     }
+  }
+
+  /* ================================================================
+     Status Dot + Bottom Timeline
+     ================================================================ */
+  function updateStatusDot(health) {
+    var dot = document.getElementById("status-dot");
+    var core = dot ? dot.querySelector(".status-dot-core") : null;
+    if (!core) return;
+    if (!health) { core.className = "status-dot-core"; return; }
+    if (health.status === "ok") {
+      core.className = "status-dot-core ok";
+      dot.title = "服务运行中";
+    } else if (health.db && health.db.connected) {
+      core.className = "status-dot-core warn";
+      dot.title = "服务异常";
+    } else {
+      core.className = "status-dot-core err";
+      dot.title = "服务离线";
+    }
+  }
+
+  function updateTimeline(stats) {
+    var fill = document.getElementById("timeline-fill");
+    var label = document.getElementById("timeline-label");
+    if (!fill || !label) return;
+    var total = (stats && stats.atoms) || 0;
+    // 假设目标 100 条/天，计算进度
+    var target = 100;
+    var pct = Math.min(100, Math.round((total / target) * 100));
+    fill.style.width = pct + "%";
+    label.textContent = "今天已积累 " + total + " 条记忆 · " + pct + "%";
+  }
+
+  async function startHealthPolling() {
+    async function tick() {
+      try {
+        var health = await fetch("/health").then(function(r) { return r.json(); }).catch(function() { return {}; });
+        updateStatusDot(health);
+        // 同时尝试获取 stats 更新时间线
+        var stats = await apiRequest("stats").then(unwrapApiData).catch(function() { return {}; });
+        updateTimeline(stats);
+      } catch (_) {}
+    }
+    tick();
+    setInterval(tick, 30000);
   }
 
   /* ================================================================

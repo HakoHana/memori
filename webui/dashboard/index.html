@@ -104,31 +104,14 @@
                 <option value="100">100条/页</option>
               </select>
             </div>
-            <div class="table-container">
-              <div class="table-scroll" id="memories-scroll">
-              <table class="data-table" id="memories-table">
-                <thead>
-                  <tr>
-                    <th class="cell-check"><input type="checkbox" id="mem-select-page" /></th>
-                    <th class="cell-id">ID</th>
-                    <th class="cell-summary">摘要</th>
-                    <th class="cell-type">类型</th>
-                    <th class="cell-importance">重要度</th>
-                    <th class="cell-status">状态</th>
-                    <th class="cell-created">时间</th>
-                  </tr>
-                </thead>
-                <tbody id="memories-body">
-                  <tr><td colspan="7" class="table-empty">暂无数据</td></tr>
-                </tbody>
-              </table>
-              </div>
-              <div class="pagination">
-                <div class="pagination-controls">
-                  <button class="btn btn-sm btn-ghost" id="mem-prev" disabled>上一页</button>
-                  <span class="pagination-info" id="mem-pagination-info">第 1/1 页 · 共 0 条</span>
-                  <button class="btn btn-sm btn-ghost" id="mem-next" disabled>下一页</button>
-                </div>
+            <div class="mem-card-list" id="memories-list">
+              <div class="mem-card-empty" id="memories-empty">暂无数据</div>
+            </div>
+            <div class="pagination">
+              <div class="pagination-controls">
+                <button class="btn btn-sm btn-ghost" id="mem-prev" disabled>上一页</button>
+                <span class="pagination-info" id="mem-pagination-info">第 1/1 页 · 共 0 条</span>
+                <button class="btn btn-sm btn-ghost" id="mem-next" disabled>下一页</button>
               </div>
             </div>
           </div>
@@ -272,6 +255,18 @@
     </aside>
     <!-- Toast -->
     <div class="toast" id="toast"></div>
+    <!-- Status Dot -->
+    <div class="status-dot" id="status-dot" title="服务状态">
+      <span class="status-dot-ring"></span>
+      <span class="status-dot-core"></span>
+    </div>
+    <!-- Bottom Timeline -->
+    <div class="bottom-timeline" id="bottom-timeline">
+      <div class="bottom-timeline-track">
+        <div class="bottom-timeline-fill" id="timeline-fill"></div>
+      </div>
+      <span class="bottom-timeline-label" id="timeline-label">今天还没有新的回忆</span>
+    </div>
     <script src="./graph-2d.js"></script>
     <script src="./graph-ui.js"></script>
     <script src="./settings.js"></script>

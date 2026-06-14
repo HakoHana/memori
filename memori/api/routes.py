@@ -408,12 +408,10 @@ _CONFIG_META = {
 async def get_config(core: MemoryCore = Depends(get_core)):
     """获取当前配置（含元数据）"""
     providers = core.config.get("_providers", [])
-    # 按 type 过滤：LLM 提供商（type=llm / llm:api / llm:ollama，或不设置默认 llm）
+    # 按 type 过滤：LLM 提供商（type=llm 或不设置默认 llm）
     llm_providers = [
         p for p in providers
-        if p.get("name") and (
-            p.get("type", "llm") in ("llm", "llm:api", "llm:ollama")
-        )
+        if p.get("name") and p.get("type", "llm") == "llm"
     ]
     llm_names = [p["name"] for p in llm_providers]
     # 嵌入提供商（type 以 embed: 开头）

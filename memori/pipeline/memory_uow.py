@@ -37,22 +37,21 @@ class MemoryUnitOfWork:
 
     # ── 日记操作 ──
 
-    async def append_diary(self, user_id: str, date: str, content: str) -> int:
+    async def append_diary(self, date: str, content: str) -> int:
         """追加一篇日记，返回 diary_id"""
-        return await self._diary.append(user_id, date, content)
+        return await self._diary.append(date, content)
 
     async def update_diary_importance(
-        self, user_id: str, date: str, importance: float, diary_id: int = 0,
+        self, date: str, importance: float, diary_id: int = 0,
     ):
         """更新日记重要度
 
-        优先按 diary_id 精确匹配，否则回退到 (user_id, date) 最新条目。
-        保持 (user_id, date, importance) 签名向后兼容。
+        优先按 diary_id 精确匹配，否则回退到 date 最新条目。
         """
         if diary_id > 0:
             await self._diary.update_metadata_by_id(diary_id, importance=importance)
         else:
-            await self._diary.update_metadata(user_id, date, importance=importance)
+            await self._diary.update_metadata(date, importance=importance)
 
     # ── 原子查询（供去重使用）──
 

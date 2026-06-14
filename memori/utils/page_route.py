@@ -66,10 +66,9 @@ class PageRoute:
         return await self.service.query_graph(entity)
 
     async def list_memories(self):
-        uid = request.args.get("uid", "") or request.args.get("user_id", "")
         page = int(request.args.get("page", 1))
         size = int(request.args.get("size", 20))
-        return await self.service.list_memories(uid, page, size)
+        return await self.service.list_memories(page, size)
 
     async def get_memory_detail(self):
         eid = int(request.args.get("id", 0))
@@ -109,28 +108,24 @@ class PageRoute:
         return await self.service.update_diary_status(ids, status)
 
     async def get_timeline(self):
-        uid = request.args.get("uid", "")
         year = request.args.get("year", "")
         month = request.args.get("month", "")
-        return await self.service.get_timeline(uid, year, month)
+        return await self.service.get_timeline(year, month)
 
     async def get_day_detail(self):
-        uid = request.args.get("uid", "")
         date = request.args.get("date", "")
-        return await self.service.get_day_detail(uid, date)
+        return await self.service.get_day_detail(date)
 
     async def get_diary(self):
         eid = request.args.get("id", 0, type=int)
-        uid = request.args.get("uid", "")
         date = request.args.get("date", "")
-        return await self.service.get_diary(eid, uid, date)
+        return await self.service.get_diary(eid, date)
 
     async def update_diary(self):
         body = await request.get_json() or {}
-        user_id = body.get("user_id", "Hana")
         date = body.get("date", "")
         content = body.get("content", "")
-        return await self.service.update_diary(user_id, date, content)
+        return await self.service.update_diary(date, content)
 
     async def get_persona(self):
         uid = request.args.get("uid", "")
@@ -152,10 +147,9 @@ class PageRoute:
         return await self.service.get_user_detail(uid)
 
     async def list_archived(self):
-        uid = request.args.get("uid", "")
         page = int(request.args.get("page", 1))
         size = int(request.args.get("size", 20))
-        return await self.service.list_archived(uid, page, size)
+        return await self.service.list_archived(page, size)
 
     async def restore_archived(self):
         body = await request.get_json() or {}

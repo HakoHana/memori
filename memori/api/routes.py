@@ -22,21 +22,47 @@ router = APIRouter()
 #  事件处理
 # ═══════════════════════════════════════════════════════════
 
+async def _resolve_cuid(core: MemoryCore, raw_id: str) -> tuple[str, str]:
+    """将任意入口传来的 ID 解析为 (canonical_uid, 显示名)
+
+    支持：QQ 号、显示名、canonical uid 三种输入。
+    """
+    if not raw_id or not core.atom_store:
+        return (raw_id, raw_id or "")
+    try:
+        # 1. 先当平台 ID 查
+        result = await core.atom_store.resolve_identity(f"qq:{raw_id}")
+        if result:
+            return result
+        # 2. 再当 canonical uid 或显示名查
+        row = await core.atom_store.fetchone(
+            "SELECT uid, COALESCE(primary_name, '') FROM canonical_users WHERE uid=? OR primary_name=?",
+            (raw_id, raw_id),
+        )
+        if row:
+            return (row[0], row[1] or raw_id)
+    except Exception:
+        pass
+    return (raw_id, raw_id)
+
+
 @router.post("/v1/events", response_model=EventResponse)
 async def process_event(body: EventRequest, core: MemoryCore = Depends(get_core)):
     """提交消息 → 召回记忆 → 注入上下文"""
+    cuid, display_name = await _resolve_cuid(core, body.user_id)
+
     modified = await core.process_message(
-        user_id=body.user_id,
+        user_id=cuid,
         message_text=body.text,
-        sender_name=body.sender_name,
+        sender_name=display_name or body.sender_name,
         system_prompt=body.system_prompt,
     )
 
     # 后台触发整理（不阻塞响应）
-    await core.trigger_capture(body.user_id, body.text)
+    await core.trigger_capture(cuid, body.text)
 
     # 召回结果
-    recall = await core.retriever.get_context_memories(body.user_id, body.text)
+    recall = await core.retriever.get_context_memories(cuid, body.text)
 
     return EventResponse(
         modified_text=modified,
@@ -70,32 +96,30 @@ async def list_memories(
         return {"ok": True, "results": results, "total": len(results)}
 
     # 列表模式
-    items, total = await core.diary_store.list_paginated(uid or None, page, size)
+    items, total = await core.diary_store.list_paginated(page, size)
     return {"ok": True, "items": items, "total": total}
 
 
 @router.get("/v1/recall-test")
 async def recall_test(
     q: str = Query(..., description="搜索关键词"),
-    uid: str = Query(..., description="用户 ID"),
+    uid: str = Query("", description="用户 ID（可选，用于社交加权和画像）"),
     k: int = Query(5, ge=1, le=50, description="召回条数"),
     core: MemoryCore = Depends(get_core),
 ):
     """召回测试：执行完整召回流水线并返回注入文本预览"""
-    if not q or not uid:
-        return {"ok": False, "error": "需要 q 和 uid 参数"}
+    if not q:
+        return {"ok": False, "error": "需要 q 参数"}
 
-    recall = await core.retriever.get_context_memories(uid, q, k)
+    # 解析 canonical uid（支持 raw QQ / 显示名 / cuid 三种输入）
+    cuid, display_name = await _resolve_cuid(core, uid)
+
+    recall = await core.retriever.get_context_memories(cuid, q, k)
 
     # 注入预览 — 模拟注入效果
     injected_text = ""
-    if recall.memory_text or recall.persona_text:
-        combined = ""
-        if recall.persona_text:
-            combined += f"关于你：\n{recall.persona_text[:300]}\n\n"
-        if recall.memory_text:
-            combined += recall.memory_text
-        injected_text = core.injector.format_memory_block(combined, uid)
+    if recall.memory_text:
+        injected_text = core.injector.format_memory_block(recall.memory_text, display_name or uid)
 
     results = []
     for a in recall.atoms:
@@ -127,20 +151,19 @@ async def get_timeline(
     core: MemoryCore = Depends(get_core),
 ):
     """按时间线浏览记忆日期"""
-    dates = await core.diary_store.get_timeline_dates(uid, year, month)
+    dates = await core.diary_store.get_timeline_dates(year, month)
     return {"ok": True, "dates": dates}
 
 
 @router.get("/v1/memories/today-stats")
 async def get_today_stats(
-    uid: str = Query("", description="用户 ID（空=全部用户）"),
     core: MemoryCore = Depends(get_core),
 ):
-    """获取今日记忆数量（用于页面底部活跃度进度条）"""
+    """获取今日记忆数量"""
     today = time.strftime("%Y-%m-%d")
     row = await core.diary_store.fetchone(
-        "SELECT COUNT(*) FROM diary_entries WHERE date=? AND (?='' OR user_id=?) AND status='active'",
-        (today, uid, uid),
+        "SELECT COUNT(*) FROM diary_entries WHERE date=? AND status='active'",
+        (today,),
     )
     total = row[0] if row else 0
     return {"ok": True, "total": total}
@@ -202,39 +225,20 @@ async def list_diaries(
     core: MemoryCore = Depends(get_core),
 ):
     """日记列表（分页）"""
-    items, total = await core.diary_store.list_paginated(uid or None, page, size)
+    items, total = await core.diary_store.list_paginated(page, size)
     return {"ok": True, "items": items, "total": total, "page": page, "size": size}
-
-
-@router.get("/v1/diaries/{date}")
-async def get_diary(
-    date: str,
-    uid: str = Query(..., description="用户 ID"),
-    core: MemoryCore = Depends(get_core),
-):
-    """获取指定日期日记"""
-    diary = await core.diary_store.get_by_id(
-        (await core.diary_store.fetchone(
-            "SELECT id FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
-            (uid, date),
-        ) or [0])[0]
-    )
-    if not diary:
-        raise HTTPException(404, "该日期没有日记")
-    return {"ok": True, "data": diary}
 
 
 @router.put("/v1/diaries/{date}")
 async def update_diary(
     date: str,
     body: DiaryUpdateRequest,
-    uid: str = Query(..., description="用户 ID"),
     core: MemoryCore = Depends(get_core),
 ):
     """更新指定日期日记"""
     from ..utils.diary_helper import parse_diary_content, mood_to_sentiment
     content = body.content
-    await core.diary_store.upsert(uid, date, content)
+    await core.diary_store.upsert(date, content)
     fm, _ = parse_diary_content(content)
     updates = {}
     if "mood" in fm:
@@ -246,7 +250,7 @@ async def update_diary(
         if isinstance(topics, list):
             updates["topics"] = json.dumps(topics, ensure_ascii=False)
     if updates:
-        await core.diary_store.update_metadata(uid, date, **updates)
+        await core.diary_store.update_metadata(date, **updates)
     return {"ok": True}
 
 
@@ -404,10 +408,14 @@ _CONFIG_META = {
                           "hint": "用于判断值不值得记的 LLM，需已在模型提供商中配置。留空 = 与主模型相同"},
     "embed_provider_id": {"type": "string", "default": "", "label": "嵌入模型", "group": "基础",
                           "hint": "用于向量检索的嵌入模型。需已在模型提供商中配置。留空 = 不启用向量检索"},
-    "recall_count": {"type": "int", "default": 5, "label": "召回条数", "group": "检索",
-                     "hint": "每次消息处理时最多召回多少条记忆原子"},
+    "recall_count": {"type": "int", "default": 5, "label": "最终召回数", "group": "检索",
+                     "hint": "社交加权后最终注入 LLM 的记忆条数"},
+    "candidate_k": {"type": "int", "default": 50, "label": "每路候选数", "group": "检索",
+                    "hint": "每条检索路最多返回多少候选，越大越全但越慢"},
     "recall_max_tokens": {"type": "int", "default": 500, "label": "召回 token 上限", "group": "检索",
                           "hint": "召回的文本总长度限制，超过则截断（约 2000 汉字）"},
+    "social_alpha": {"type": "float", "default": 0.3, "label": "社交增强系数", "group": "检索",
+                     "hint": "公式 rel × (1 + α × boost)，boost=亲密度权重(0~1)，0=纯相关"},
     "injection_position": {
         "type": "select", "default": "system_prompt_suffix",
         "options": ["system_prompt_suffix", "user_message_prefix", "user_message_suffix", "knowledge_section", "manual_only"],
@@ -764,7 +772,7 @@ async def revoke_api_key(
 async def read_diary(body: ReadDiaryRequest, core: MemoryCore = Depends(get_core)):
     """读取完整日记（供 Agent 工具使用）"""
     row = await core.diary_store.fetchone(
-        "SELECT id, user_id, date, content, importance FROM diary_entries WHERE id=?",
+        "SELECT id, date, content, importance FROM diary_entries WHERE id=?",
         (body.diary_id,),
     )
     if not row:
@@ -795,11 +803,9 @@ async def read_diary(body: ReadDiaryRequest, core: MemoryCore = Depends(get_core
 # ═══════════════════════════════════════════════
 
 class ReprocessRequest(BaseModel):
-    user_id: str | None = Field(None, description="限制处理某个用户，空=全部")
     max_diaries: int = Field(9999, ge=1, description="最多处理几条")
     skip_atoms: bool = Field(False, description="跳过原子提取")
     skip_graph: bool = Field(False, description="跳过图谱索引")
-    skip_persona: bool = Field(False, description="跳过画像重建")
 
 
 @router.post("/v1/admin/reprocess")
@@ -816,7 +822,6 @@ async def reprocess(
 
     capturer = getattr(core, "capturer", None)
     graph_engine = getattr(core, "graph_engine", None)
-    persona_engine = getattr(core, "persona_engine", None)
     uow = getattr(core, "_uow", None) or getattr(capturer, "_store", None)
 
     if not capturer or not uow:
@@ -827,36 +832,27 @@ async def reprocess(
         "diaries_processed": 0,
         "atoms_created": 0,
         "graph_indexed": 0,
-        "personas_rebuilt": 0,
         "errors": [],
         "duration_seconds": 0,
     }
 
-    # 1. 读取日记
-    if body.user_id:
-        rows = await core.diary_store.fetch(
-            "SELECT id, user_id, date, content FROM diary_entries "
-            "WHERE user_id=? AND status='active' ORDER BY id", (body.user_id,)
-        )
-    else:
-        rows = await core.diary_store.fetch(
-            "SELECT id, user_id, date, content FROM diary_entries WHERE status='active' ORDER BY id"
-        )
+    # 1. 读取日记（全库）
+    rows = await core.diary_store.fetch(
+        "SELECT id, date, content FROM diary_entries WHERE status='active' ORDER BY id"
+    )
 
     total = len(rows)
     limit = min(body.max_diaries, total)
     logger.info(f"[reprocess] 开始重处理: {limit}/{total} 条日记")
-    users_affected = set()
 
     for idx in range(limit):
-        diary_id, user_id, date, content = rows[idx]
-        users_affected.add(user_id)
-        logger.info(f"[reprocess] [{idx+1}/{limit}] 日记 #{diary_id} ({user_id} @ {date})")
+        diary_id, date, content = rows[idx]
+        logger.info(f"[reprocess] [{idx+1}/{limit}] 日记 #{diary_id} @ {date}")
 
         try:
             # ── 提取原子 ──
             if not body.skip_atoms:
-                atoms = await capturer._extract_atoms(content, user_id, date)
+                atoms = await capturer._extract_atoms(content, '', date)
                 if atoms:
                     # 保存原子
                     atom_ids = await uow.insert_atoms(atoms)
@@ -892,18 +888,6 @@ async def reprocess(
             logger.info(f"[reprocess] 共现边批量更新: {cooc_count}")
         except Exception as e:
             logger.warning(f"[reprocess] 共现边更新失败: {e}")
-
-    # ── 重建画像 ──
-    if not body.skip_persona and persona_engine:
-        for uid in users_affected:
-            try:
-                await persona_engine.full_rebuild(uid)
-                results["personas_rebuilt"] += 1
-                logger.info(f"[reprocess] 画像重建完成: {uid}")
-            except Exception as e:
-                err_msg = f"画像 {uid}: {type(e).__name__}: {e}"
-                logger.error(f"[reprocess] {err_msg}")
-                results["errors"].append(err_msg)
 
     results["duration_seconds"] = round(time.time() - start_ts, 1)
     return {"ok": True, **results}

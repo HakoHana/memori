@@ -1288,16 +1288,15 @@
     var query = document.getElementById("recall-query").value.trim();
     if (!query) return showToast("请输入查询内容", true);
     var k = parseInt(document.getElementById("recall-k").value) || 5;
-    var uid = document.getElementById("recall-user").value;
-    if (!uid) return showToast("请先选择一个目标用户", true);
+    var uid = document.getElementById("recall-uid").value.trim();
     var btn = document.getElementById("recall-search-btn");
     btn.disabled = true;
 
     try {
       var params = new URLSearchParams();
       params.set("q", query);
-      params.set("uid", uid);
       params.set("k", String(k));
+      if (uid) params.set("uid", uid);
       var data = unwrapApiData(await apiRequest("recall-test?" + params.toString())) || {};
       renderRecallResults(data);
     } catch (e) {
@@ -1312,81 +1311,92 @@
     var stats = document.getElementById("recall-stats");
     var container = document.getElementById("recall-results");
     var total = data.total || 0;
+    var diaryRefs = data.diary_refs || [];
+    var injectedText = data.injected_text || "";
 
+    // 统计信息
     if (total) {
       stats.classList.remove("hidden");
-      document.getElementById("recall-count-text").textContent = "共 " + total + " 条结果";
+      var countText = "召回 " + total + " 条原子";
+      if (diaryRefs.length) countText += "，回溯 " + diaryRefs.length + " 篇日记";
+      document.getElementById("recall-count-text").textContent = countText;
       var timeEl = document.getElementById("recall-time-text");
       if (timeEl) timeEl.textContent = "";
     } else {
       stats.classList.add("hidden");
     }
 
-    if (!total) {
+    if (!total && !injectedText) {
       container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary)">' + window.t("recall.noMatch") + '</div>';
-      document.getElementById("recall-injection-preview").classList.add("hidden");
       return;
     }
 
-    container.innerHTML = (data.results || []).map(function(r, i) {
+    // ── 主结果：注入 LLM 的格式化内容 ──
+    var html = "";
+    html += '<div class="recall-injected-section">';
+    html += '<div class="recall-injected-header">';
+    html += '<span class="recall-injected-label">📋 实际注入 LLM 的内容</span>';
+    html += '</div>';
+    html += '<pre class="recall-injected-text">' + esc(injectedText) + '</pre>';
+    html += '</div>';
+
+    // ── 折叠：技术详情（原子列表 + 分数） ──
+    html += '<div class="recall-detail-section">';
+    html += '<div class="recall-detail-header" onclick="toggleRecallDetail()">';
+    html += '<span class="recall-detail-toggle" id="recall-detail-toggle">▸</span>';
+    html += '<span>召回原子详情（' + total + ' 条）</span>';
+    html += '</div>';
+    html += '<div class="recall-detail-body hidden" id="recall-detail-body">';
+
+    html += (data.results || []).map(function(r, i) {
       var pct = r.score_percentage || 0;
       var badgeCls = pct >= 70 ? "high" : pct >= 45 ? "medium" : "low";
-      var scoreMeta = Object.assign({}, r.metadata || {}, r.score_breakdown || {});
-      var scores = [
-        { label: "Doc-KW", val: scoreMeta.document_keyword_score, cls: "doc-kw" },
-        { label: "Doc-Vec", val: scoreMeta.document_vector_score, cls: "doc-vec" },
-        { label: "Graph-KW", val: scoreMeta.graph_keyword_score, cls: "graph-kw" },
-        { label: "Graph-Vec", val: scoreMeta.graph_vector_score, cls: "graph-vec" },
-      ];
       return '<div class="result-card" data-memory-id="' + r.memory_id + '">' +
         '<div class="result-card-header">' +
           '<span class="result-rank">#' + (i + 1) + '</span>' +
           '<span class="result-score-badge ' + badgeCls + '">' + pct.toFixed(1) + '%</span>' +
+          '<span class="result-card-type">' + esc(r.type || "") + '</span>' +
+          '<span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">' +
+            (r.date || "") + ' · imp: ' + (r.importance != null ? Number(r.importance).toFixed(2) : "--") +
+          '</span>' +
         '</div>' +
         '<div class="result-content">' + esc(cleanDisplayText(r.content || "")) + '</div>' +
-        '<div class="result-scores">' + scores.map(function(s) {
-          var v = s.val != null ? Math.min(1, Math.max(0, parseFloat(s.val) || 0)) : 0;
-          var w = (v * 100).toFixed(0);
-          return '<div class="result-score-row">' +
-            '<span class="result-score-row-label">' + s.label + '</span>' +
-            '<div class="result-score-row-track"><div class="result-score-row-fill ' + s.cls + '" style="width:' + w + '%"></div></div>' +
-            '<span class="result-score-row-value">' + v.toFixed(2) + '</span>' +
-          '</div>';
-        }).join("") + '</div>' +
       '</div>';
-    });
+    }).join("");
 
-    container.querySelectorAll(".result-card").forEach(function(card) {
-      card.addEventListener("click", function() {
-        var mid = parseInt(card.dataset.memoryId);
-        var item = state.memory.items.find(function(i) { return i.memory_id === mid; });
-        if (item) {
-          renderPeekMemory(item);
-        } else {
-          renderPeekMemory({ memory_id: mid });
-        }
+    html += '</div></div>'; // recall-detail-section
+
+    // ── 折叠：日记溯源 ──
+    if (diaryRefs.length) {
+      html += '<div class="recall-detail-section">';
+      html += '<div class="recall-detail-header" onclick="toggleRecallDiary()">';
+      html += '<span class="recall-detail-toggle" id="recall-diary-toggle">▸</span>';
+      html += '<span>溯源日记（' + diaryRefs.length + ' 篇）</span>';
+      html += '</div>';
+      html += '<div class="recall-detail-body hidden" id="recall-diary-body">';
+      diaryRefs.forEach(function(dr) {
+        html += '<div class="recall-diary-card">';
+        html += '<div class="recall-diary-header">[' + esc(dr.date || "") + ' 日记#' + dr.diary_id + ']</div>';
+        html += '<div class="recall-diary-content">' + esc(dr.snippet || "") + '</div>';
+        html += '</div>';
       });
-    });
-
-    // 注入 LLM 的内容预览
-    var previewEl = document.getElementById("recall-injection-preview");
-    var textEl = document.getElementById("recall-injection-text");
-    if (previewEl && textEl) {
-      if (data.injected_text) {
-        previewEl.classList.remove("hidden");
-        textEl.textContent = data.injected_text;
-        // 默认收起
-        document.getElementById("recall-preview-body").classList.add("hidden");
-        document.getElementById("recall-preview-toggle").classList.remove("open");
-      } else {
-        previewEl.classList.add("hidden");
-      }
+      html += '</div></div>';
     }
+
+    container.innerHTML = html;
   }
 
-  function toggleInjectionPreview() {
-    var body = document.getElementById("recall-preview-body");
-    var toggle = document.getElementById("recall-preview-toggle");
+  function toggleRecallDetail() {
+    var body = document.getElementById("recall-detail-body");
+    var toggle = document.getElementById("recall-detail-toggle");
+    if (!body || !toggle) return;
+    body.classList.toggle("hidden");
+    toggle.classList.toggle("open");
+  }
+
+  function toggleRecallDiary() {
+    var body = document.getElementById("recall-diary-body");
+    var toggle = document.getElementById("recall-diary-toggle");
     if (!body || !toggle) return;
     body.classList.toggle("hidden");
     toggle.classList.toggle("open");
@@ -1400,23 +1410,6 @@
     document.getElementById("recall-k").addEventListener("input", function() {
       document.getElementById("recall-k-value").textContent = this.value;
     });
-
-    // 加载用户列表到下拉框
-    loadRecallUsers();
-  }
-
-  async function loadRecallUsers() {
-    try {
-      var data = unwrapApiData(await apiRequest("users")) || {};
-      var users = data.users || [];
-      var sel = document.getElementById("recall-user");
-      if (!sel) return;
-      sel.innerHTML = users.map(function(u) {
-        return '<option value="' + esc(u.uid) + '">' + esc(u.name || u.uid) + '</option>';
-      }).join("");
-    } catch (e) {
-      console.warn("加载用户列表失败", e);
-    }
   }
 
   /* ================================================================

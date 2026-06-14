@@ -38,7 +38,7 @@ class GraphVectorRetriever:
         user_ids: list[str],
         k: int = 5,
     ) -> list[MemoryAtom]:
-        if not self.embed or not keywords or not user_ids:
+        if not self.embed or not keywords:
             return []
 
         query = " ".join(keywords)

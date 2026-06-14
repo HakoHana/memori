@@ -1,4 +1,4 @@
-"""多路检索编排 — 双路四模式混合检索
+"""多路检索编排 — 双路四模式混合检索（全库搜索，不限 user_id）
 
 架构：
   MultiRouteRetriever.retrieve()
@@ -58,12 +58,13 @@ class MultiRouteRetriever:
     ) -> list[MemoryAtom]:
         """双路四模式检索入口
 
+        user_ids 为空 = 全库搜索（不限 user_id），子检索器已支持。
         候选数控制：
         - 子路检索取 k*2
         - 内部融合取 k
         - 跨路融合取 k
         """
-        if not keywords or not user_ids:
+        if not keywords:
             return []
 
         logger.debug(

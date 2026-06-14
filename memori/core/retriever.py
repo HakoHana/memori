@@ -48,8 +48,13 @@ class Retriever(IRetriever):
         self.config = config or {}
         self.conversation_store = conversation_store
         self.recall_count = self.config.get("recall_count", 5)
+        self.candidate_k = self.config.get("candidate_k", 50)   # 每路候选数
         self.recall_max_tokens = self.config.get("recall_max_tokens", 500)
+
+        # 社交加权
+        self.social_alpha = self.config.get("social_alpha", 0.3)             # 增强系数
         self.embed_provider = embed_provider
+        self.graph_store = graph_store
 
         # 多路检索引擎（双路四模式）
         self.multi_route: MultiRouteRetriever | None = None
@@ -129,49 +134,113 @@ class Retriever(IRetriever):
         return [k for k in keywords if not (k in seen or seen.add(k))][:15]
 
     async def recall(self, user_id: str, query: str, k: int | None = None) -> list[MemoryAtom]:
-        """召回：双路检索（BM25 文档路 + Graph 图路）→ RRF 融合
+        """长期记忆召回（推荐算法风格）
 
-        图路未就绪时回退到单 BM25 检索，
-        全未命中时按重要度降序兜底。
+        流程：
+        1.  多路检索（全库，不限 user_id），每路返回 candidate_k 条
+        2.  RRF 融合去重
+        3.  社交加权重排序（软加权，不丢弃）
+        4.  取 top-k 返回
         """
         k = k or self.recall_count
         if not query or not query.strip():
             return []
 
-        extra_ids = await self.atom_store.get_related_user_ids(user_id)
-        all_uids = list(set([user_id] + extra_ids))
         keywords = self._keyword_list(query)
+        candidate_k = self.candidate_k
 
-        # ── 双路检索 ──
+        # ── 1. 多路检索（全库，空 user_ids = 不限 user_id）──
         atoms: list[MemoryAtom] = []
-        if self.dual_route:
-            atoms = await self.dual_route.retrieve(keywords, all_uids, k)
+        if self.multi_route:
+            atoms = await self.multi_route.retrieve(keywords, [], candidate_k)
 
-        # ── 双路未命中时，重要度降序回退 ──
-        if len(atoms) < k:
+        # ── 2. 兜底：全库重要度降序（填补多路未覆盖的）──
+        if len(atoms) < candidate_k:
             seen_ids = {a.atom_id for a in atoms}
-            for uid in all_uids:
-                try:
-                    rows = await self.atom_store.fetch(
-                        "SELECT * FROM memory_atoms WHERE user_id=? AND status='active' ORDER BY importance DESC, id DESC LIMIT ?",
-                        (uid, k * 3),
-                    )
-                    for r in rows:
-                        atom = self.atom_store._row_to_atom(r)
-                        if atom.atom_id not in seen_ids:
-                            atoms.append(atom)
-                            seen_ids.add(atom.atom_id)
-                            if len(atoms) >= k:
-                                break
-                except Exception:
-                    pass
+            try:
+                rows = await self.atom_store.fetch(
+                    "SELECT * FROM memory_atoms WHERE status='active' "
+                    "ORDER BY importance DESC, id DESC LIMIT ?",
+                    (candidate_k,),
+                )
+                for r in rows:
+                    atom = self.atom_store._row_to_atom(r)
+                    if atom.atom_id not in seen_ids:
+                        atoms.append(atom)
+                        seen_ids.add(atom.atom_id)
+                        if len(atoms) >= candidate_k:
+                            break
+            except Exception:
+                pass
 
-        with open('/tmp/recall_debug.txt', 'a') as _f:
-            _f.write(f"recall uid={user_id} returned={len(atoms)} keywords={keywords}\n")
-            if atoms:
-                _f.write(f"  first: {atoms[0].content[:50]}\n")
+        # ── 3. 社交加权重排序 ──
+        atoms = await self._social_rerank(atoms, user_id)
 
+        # ── 4. 截取最终 top-k ──
         return atoms[:k]
+
+    async def _social_rerank(
+        self, atoms: list[MemoryAtom], user_id: str
+    ) -> list[MemoryAtom]:
+        """社交加权重排序（乘法增强，不丢弃）
+
+        策略（按架构图）：
+        - 从候选原子提取唯一 user_id
+        - 一次性查询 graph_edges 双向匹配（from_node OR to_node）
+        - 自己 weight = 1.0，朋友取 edge.weight，缺失 = 0.0
+        - 乘法公式：final_score = relevance × (1 + α × weight)
+        """
+        if not atoms or not self.graph_store or not user_id:
+            return atoms
+
+        alpha = getattr(self, 'social_alpha', 0.3)
+
+        # 1. 从候选原子提取唯一 user_id
+        candidate_uids = list({a.user_id for a in atoms if a.user_id})
+
+        # 2. 批量查 graph_edges（双向匹配），只查这些 user_id 中哪些是朋友
+        friend_weights: dict[str, float] = {}
+        try:
+            other_uids = [u for u in candidate_uids if u != user_id]
+            if other_uids:
+                uid_node = f"user:{user_id}"
+                other_nodes = [f"user:{u}" for u in other_uids]
+                placeholders = ",".join("?" for _ in other_nodes)
+                rows = await self.graph_store.fetch(
+                    f"""SELECT
+                            CASE WHEN from_node = ? THEN to_node ELSE from_node END AS friend_node,
+                            weight
+                        FROM edges
+                        WHERE relation_type = 'friend_of'
+                          AND (? IN (from_node, to_node))
+                          AND (from_node IN ({placeholders}) OR to_node IN ({placeholders}))""",
+                    (uid_node, uid_node, *other_nodes, *other_nodes),
+                )
+                for r in rows:
+                    uid = r[0].split(":", 1)[1]  # "user:u_xxx" → "u_xxx"
+                    friend_weights[uid] = max(friend_weights.get(uid, 0.0), r[1])
+        except Exception:
+            pass
+
+        # 3. 乘法公式重排序
+        n = len(atoms)
+        scored: list[tuple[float, int, MemoryAtom]] = []
+
+        for idx, atom in enumerate(atoms):
+            relevance = 1.0 - (idx / max(1, n - 1)) if n > 1 else 1.0
+
+            if atom.user_id == user_id:
+                boost = 1.0
+            elif atom.user_id in friend_weights:
+                boost = friend_weights[atom.user_id]
+            else:
+                boost = 0.0
+
+            final_score = relevance * (1.0 + alpha * boost)
+            scored.append((final_score, idx, atom))
+
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [s[2] for s in scored]
 
     async def get_context_memories(
         self, user_id: str, query: str, k: int | None = None
@@ -211,28 +280,80 @@ class Retriever(IRetriever):
             if summary_short:
                 persona_text = f"{persona_text}\n摘要: {summary_short}" if persona_text else f"摘要: {summary_short}"
 
-        # ── 原子回溯日记：遍历 top 原子，收集不重复的日记段落 ──
+        # ── 原子回溯日记：批量一次 IN 获取 ──
         max_diaries = int(self.config.get("injection_max_diaries", 2))
         diary_refs: list[dict] = []
         if atoms and max_diaries > 0:
-            seen_diary_ids: set[int] = set()
-            for atom in atoms:
-                if len(diary_refs) >= max_diaries:
-                    break
-                diary_ids = await self._find_atom_diaries(atom)
-                for did in diary_ids:
-                    if did in seen_diary_ids:
-                        continue
-                    seen_diary_ids.add(did)
-                    seg = await self._best_diary_segment([did], atom.content, query)
-                    if seg:
-                        diary_refs.append(seg)
-                        if len(diary_refs) >= max_diaries:
-                            break
+            try:
+                atom_ids = [a.atom_id for a in atoms if a.atom_id]
+                # 1. 批量查 atoms_diary_links
+                placeholders = ",".join("?" for _ in atom_ids)
+                link_rows = await self.atom_store.fetch(
+                    f"""SELECT atom_id, diary_id, importance, snippet
+                        FROM atoms_diary_links
+                        WHERE atom_id IN ({placeholders})
+                        ORDER BY importance DESC""",
+                    atom_ids,
+                )
+                if link_rows:
+                    # 2. 去重取 top diary_id
+                    seen_dids: set[int] = set()
+                    top_diary_ids: list[int] = []
+                    for lr in link_rows:
+                        did = lr[1]
+                        if did not in seen_dids:
+                            seen_dids.add(did)
+                            top_diary_ids.append(did)
+                            if len(top_diary_ids) >= max_diaries:
+                                break
+
+                    # 3. 批量查日记内容
+                    if top_diary_ids:
+                        d_placeholders = ",".join("?" for _ in top_diary_ids)
+                        diary_rows = await self.diary_store.fetch(
+                            f"SELECT id, date, content FROM diary_entries WHERE id IN ({d_placeholders})",
+                            top_diary_ids,
+                        )
+                        diary_map = {r[0]: (r[1] or "", r[2] or "") for r in diary_rows}
+
+                        # 构建 atom 内容映射（用于段落匹配）
+                        atom_content_map = {a.atom_id: a.content for a in atoms}
+
+                        # 4. 对每个 top diary 选最佳段落
+                        for did in top_diary_ids:
+                            if did not in diary_map:
+                                continue
+                            date_str, content = diary_map[did]
+                            # 用关联到这篇日记的原子中、内容最相关的那个做匹配
+                            linked_atoms = [lr for lr in link_rows if lr[1] == did]
+                            best_atom_content = ""
+                            for lr in linked_atoms:
+                                ac = atom_content_map.get(lr[0], "")
+                                if len(ac) > len(best_atom_content):
+                                    best_atom_content = ac
+                            seg = self._pick_best_segment(
+                                content, best_atom_content, query
+                            )
+                            if seg:
+                                diary_refs.append({
+                                    "diary_id": did,
+                                    "date": date_str,
+                                    "snippet": seg[:200],
+                                })
+            except Exception:
+                pass
 
         # ── 组装文本 ──
         lines = []
         now = time.time()
+
+        # 原子内容中的 bot 名统一替换为第一人称
+        bot_name = self.config.get("bot_name", "Hana")
+
+        def _replace_bot(text: str) -> str:
+            for old in (bot_name, "Bot"):
+                text = text.replace(old, "我")
+            return text
 
         # 画像
         if persona_text:
@@ -244,7 +365,8 @@ class Retriever(IRetriever):
             for a in atoms:
                 tag = format_date_tag(a.diary_date, now)
                 date_tag = f" [{tag}]" if tag else ""
-                parts.append(f"- [{a.atom_type.value}]{date_tag} {a.content[:200]}")
+                content = _replace_bot(a.content[:200])
+                parts.append(f"- [{a.atom_type.value}]{date_tag} {content}")
             if parts:
                 lines.append("")
                 lines.append("📌 事实")
@@ -255,7 +377,8 @@ class Retriever(IRetriever):
             lines.append("")
             lines.append("📖 溯源原文")
             for dr in diary_refs:
-                lines.append(f"- [{dr['date']} 日记#{dr['diary_id']}] {dr['snippet']}")
+                snippet = _replace_bot(dr["snippet"])
+                lines.append(f"- [{dr['date']} 日记#{dr['diary_id']}] {snippet}")
 
         # 搜索提示
         lines.append("")
@@ -275,94 +398,66 @@ class Retriever(IRetriever):
             diary_refs=diary_refs,
         )
 
-    async def _find_atom_diaries(self, atom: MemoryAtom) -> list[int]:
-        """给定原子，找到所有关联的日记 ID（通过 atoms_diary_links 桥表）"""
-        diary_ids: list[int] = []
-        seen: set[int] = set()
+    @staticmethod
+    def _pick_best_segment(
+        diary_content: str, atom_content: str, query: str, max_len: int = 200,
+    ) -> str | None:
+        """提取日记中含关键词的段落（带前后句上下文）
 
-        try:
-            rows = await self.atom_store.fetch(
-                """SELECT diary_id, importance FROM atoms_diary_links
-                   WHERE atom_id = ? ORDER BY importance DESC LIMIT 10""",
-                (atom.atom_id,),
-            )
-            for r in rows:
-                did = r[0]
-                if did not in seen:
-                    seen.add(did)
-                    diary_ids.append(did)
-        except Exception:
-            pass
-
-        return diary_ids
-
-    async def _best_diary_segment(
-        self, diary_ids: list[int], atom_content: str, query: str, max_len: int = 150,
-    ) -> dict | None:
-        """从多篇日记中找与原子内容最相关的段落
-
-        Args:
-            diary_ids: 候选日记 ID 列表
-            atom_content: 原子内容（作为匹配基准）
-            query: 用户查询
-            max_len: 段落最大字数
-
-        Returns:
-            {diary_id, date, snippet} 或 None
+        策略：
+        1. 从 query 和原子内容中提取关键词
+        2. 日记分句，找含关键词最多的句子
+        3. 带上该句的前后各一句作为上下文
+        4. 无匹配则返回前 80 字作为上下文兜底
         """
-        if not diary_ids or not self.diary_store:
+        if not diary_content or not diary_content.strip():
             return None
 
-        import jieba
         import re
 
-        atom_words = set(jieba.lcut(atom_content)) if atom_content else set()
-        query_words = set(jieba.lcut(query)) if query else set()
+        # 去掉 frontmatter
+        content = diary_content
+        if content.startswith("---"):
+            end = content.find("\n---", 3)
+            if end != -1:
+                content = content[end + 5:].strip()
 
-        best_score = 0.3  # 最低匹配阈值
-        best_result = None
+        # 从 query 和原子内容收集关键词
+        keywords: set[str] = set()
+        if query:
+            keywords.update(Retriever._keyword_list(Retriever, query))
+        if atom_content:
+            keywords.update(Retriever._keyword_list(Retriever, atom_content))
 
-        for did in diary_ids:
-            row = await self.diary_store.fetchone(
-                "SELECT date, content FROM diary_entries WHERE id=?", (did,)
-            )
-            if not row:
-                continue
+        # 按句号、感叹号、问号、换行分句
+        segments = re.split(r'(?<=[。！？\n])', content)
+        segments = [s.strip() for s in segments if s.strip() and len(s.strip()) >= 4]
 
-            date_str, content = row[0] or "", row[1] or ""
+        if not segments:
+            return None
 
-            # 去掉 frontmatter
-            if content.startswith("---"):
-                end = content.find("\n---", 3)
-                if end != -1:
-                    content = content[end + 5:].strip()
+        if not keywords:
+            return segments[0][:max_len]
 
-            # 分句
-            segments = re.split(r'(?<=[。！？\n])', content)
+        # 找含关键词最多的句子
+        best_idx = 0
+        best_count = 0
 
-            for seg in segments:
-                seg = seg.strip()
-                if len(seg) < 15:
-                    continue
-                seg_words = set(jieba.lcut(seg))
-                if not seg_words:
-                    continue
+        for i, seg in enumerate(segments):
+            seg_lower = seg.lower()
+            count = sum(1 for kw in keywords if kw.lower() in seg_lower)
+            if count > best_count:
+                best_count = count
+                best_idx = i
 
-                a_ov = (len(atom_words & seg_words) / len(atom_words | seg_words)
-                        if atom_words else 0)
-                q_ov = (len(query_words & seg_words) / len(query_words | seg_words)
-                        if query_words else 0)
-                score = a_ov * 0.6 + q_ov * 0.4
+        # 取命中句 + 前后各一句
+        start = max(0, best_idx - 1)
+        end = min(len(segments), best_idx + 2)
+        result = "".join(segments[start:end])
 
-                if score > best_score:
-                    best_score = score
-                    best_result = {
-                        "diary_id": did,
-                        "date": date_str,
-                        "snippet": seg[:max_len],
-                    }
-
-        return best_result
+        if len(result) > max_len:
+            return result[:max_len]
+        return result if result else segments[0][:max_len]
 
     async def get_recent_context(
         self, user_id: str, session_id: str = "", limit: int = 20, bot_name: str = "我"
@@ -374,17 +469,17 @@ class Retriever(IRetriever):
             )
         return ""
 
-    async def search_diaries(self, user_id: str, query: str, k: int = 5) -> list[dict]:
-        """搜索日记全文（diary_fts）"""
+    async def search_diaries(self, query: str, k: int = 5) -> list[dict]:
+        """搜索日记全文（diary_fts，全库搜索）"""
         if not self.diary_store:
             return []
         imp_w, rank_w = self._search_weights()
-        return await self.diary_store.search_fts(query, user_id, k, imp_w, rank_w)
+        return await self.diary_store.search_fts(query, k, imp_w, rank_w)
 
     async def hybrid_search(self, user_id: str, query: str, k: int = 5) -> dict:
         """混合搜索：原子 + 日记，合并返回"""
         atoms = await self.recall(user_id, query, k)
-        diaries = await self.search_diaries(user_id, query, k)
+        diaries = await self.search_diaries(query, k)
         return {"atoms": atoms, "diaries": diaries}
 
     async def recall_by_keywords(

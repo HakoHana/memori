@@ -14,9 +14,8 @@ class TestDiaryStoreListPaginated:
         from memori.storage.diary_store import DiaryStore
         s = DiaryStore(db_path=":memory:")
         await s.initialize()
-        # 插入测试数据
         for i in range(10):
-            await s.append("user_a", f"2026-06-{i+1:02d}", f"diary content {i}")
+            await s.append(f"2026-06-{i+1:02d}", f"diary content {i}")
         return s
 
     async def test_list_all(self, store):
@@ -35,21 +34,11 @@ class TestDiaryStoreListPaginated:
         page4, total = await store.list_paginated(page=4, size=3)
         assert len(page4) == 1
 
-    async def test_filter_by_user(self, store):
-        items, total = await store.list_paginated(uid="user_a")
-        assert len(items) == 10
-        assert total == 10
-
-        items2, total2 = await store.list_paginated(uid="nonexistent")
-        assert len(items2) == 0
-        assert total2 == 0
-
     async def test_items_have_expected_fields(self, store):
         items, _ = await store.list_paginated(page=1, size=1)
         assert len(items) == 1
         item = items[0]
         assert "id" in item
-        assert "user_id" in item
         assert "date" in item
         assert "importance" in item
         assert "topics" in item
@@ -64,8 +53,7 @@ class TestDiaryStoreGetById:
         from memori.storage.diary_store import DiaryStore
         s = DiaryStore(db_path=":memory:")
         await s.initialize()
-        await s.append("user_a", "2026-06-13", "test content")
-        # 拿到刚插入的 ID
+        await s.append("2026-06-13", "test content")
         row = await s.fetchone("SELECT id FROM diary_entries LIMIT 1")
         s._test_id = row[0] if row else 0
         return s
@@ -73,7 +61,7 @@ class TestDiaryStoreGetById:
     async def test_get_existing(self, store):
         result = await store.get_by_id(store._test_id)
         assert result is not None
-        assert result["user_id"] == "user_a"
+        assert result.get("user_id", "") == ""
         assert result["date"] == "2026-06-13"
 
     async def test_get_nonexistent(self, store):
@@ -95,17 +83,12 @@ class TestDiaryStoreCount:
         s = DiaryStore(db_path=":memory:")
         await s.initialize()
         for i in range(5):
-            await s.append("user_a", f"2026-06-{i+1:02d}", f"content {i}")
-        await s.append("user_b", "2026-06-01", "b content")
+            await s.append(f"2026-06-{i+1:02d}", f"content {i}")
+        await s.append("2026-06-01", "b content")
         return s
 
     async def test_count_all(self, store):
         assert await store.count() == 6
-
-    async def test_count_by_user(self, store):
-        assert await store.count("user_a") == 5
-        assert await store.count("user_b") == 1
-        assert await store.count("nonexistent") == 0
 
 
 @pytest.mark.asyncio
@@ -119,29 +102,25 @@ class TestDiaryStoreTimeline:
         await s.initialize()
         dates = ["2026-06-01", "2026-06-03", "2026-06-05", "2026-07-01", "2026-07-15"]
         for d in dates:
-            await s.append("user_a", d, f"content {d}")
+            await s.append(d, f"content {d}")
         return s
 
     async def test_all_dates(self, store):
-        dates = await store.get_timeline_dates("user_a")
+        dates = await store.get_timeline_dates()
         assert len(dates) == 5
 
     async def test_filter_by_year(self, store):
-        dates = await store.get_timeline_dates("user_a", year="2026")
+        dates = await store.get_timeline_dates(year="2026")
         assert len(dates) == 5
 
     async def test_filter_by_year_month(self, store):
-        dates = await store.get_timeline_dates("user_a", year="2026", month="6")
-        assert len(dates) == 3  # June
+        dates = await store.get_timeline_dates(year="2026", month="6")
+        assert len(dates) == 3
         assert all("06-" in d for d in dates)
 
     async def test_filter_no_results(self, store):
-        dates = await store.get_timeline_dates("user_a", year="2025")
+        dates = await store.get_timeline_dates(year="2025")
         assert len(dates) == 0
-
-    async def test_empty_uid(self, store):
-        dates = await store.get_timeline_dates("")
-        assert dates == []
 
 
 @pytest.mark.asyncio

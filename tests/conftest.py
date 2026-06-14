@@ -161,10 +161,10 @@ class MockDiaryStore:
         self.update_metadata = AsyncMock()
         self.search_fts = AsyncMock(return_value=[])
 
-    async def _mock_append(self, user_id: str, date: str, content: str) -> int:
+    async def _mock_append(self, date: str, content: str) -> int:
         did = self._next_id
         self._next_id += 1
-        self.entries.append({"id": did, "user_id": user_id, "date": date, "content": content})
+        self.entries.append({"id": did, "date": date, "content": content})
         self.call_log.append(f"append(diary_id={did})")
         return did
 

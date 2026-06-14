@@ -35,7 +35,7 @@ class GraphKeywordRetriever:
         user_ids: list[str],
         k: int = 5,
     ) -> list[MemoryAtom]:
-        if not keywords or not user_ids:
+        if not keywords:
             return []
 
         # 1. 关键词 → 匹配图节点（nodes.name / nodes.id LIKE）

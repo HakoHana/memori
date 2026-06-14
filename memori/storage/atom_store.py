@@ -8,6 +8,7 @@ from typing import Any
 
 from ..models.memory_atom import MemoryAtom, AtomType, AtomStatus, DecayType
 from ..core.adapters import MemoryStore
+from ..core.logger import logger
 from .base_store import BaseDbStore
 
 
@@ -91,16 +92,8 @@ class AtomStore(BaseDbStore, MemoryStore):
                 "CREATE INDEX IF NOT EXISTS idx_adl_diary ON atoms_diary_links(diary_id)"
             )
 
-            # 用户注册表（user_id → 可读名字）
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS user_registry (
-                    user_id TEXT PRIMARY KEY,
-                    user_name TEXT NOT NULL DEFAULT '',
-                    first_seen_at REAL NOT NULL,
-                    last_seen_at REAL NOT NULL,
-                    name_updated_at REAL NOT NULL
-                )
-            """)
+            # 用户注册表（已废弃，由 canonical_users + user_identities 替代）
+            # user_registry 表在 db_migration.py v9 中删除
 
             # 规范用户 ID（身份体系 v2）
             await db.execute("""
@@ -284,18 +277,18 @@ class AtomStore(BaseDbStore, MemoryStore):
     async def search_vector(
         self,
         query_embed: list[float],
-        user_id: str,
+        user_id: str | None = None,
         k: int = 5,
         model_name: str = "",
     ) -> list[MemoryAtom]:
         """余弦相似度向量搜索
 
         Python 级计算（SQLite 无原生向量索引），适合数千条级别数据。
-        加载用户活跃原子 → 逐条余弦相似度 → 排序取 top-k。
+        加载有 embedding 的活跃原子 → 逐条余弦相似度 → 排序取 top-k。
 
         Args:
             query_embed: 查询向量
-            user_id: 用户 ID
+            user_id: 用户 ID，None = 全库搜索
             k: 返回 top N
             model_name: 过滤指定模型，空字符串则不限
 
@@ -305,18 +298,25 @@ class AtomStore(BaseDbStore, MemoryStore):
         if not query_embed:
             return []
 
-        # 加载有 embedding 的活跃原子（按重要度预排序，取较多候选）
         model_filter = "AND embedding_model=?" if model_name else ""
-        params: list = [user_id]
+        params: list = []
         if model_name:
             params.append(model_name)
 
-        rows = await self.fetch(
-            f"SELECT * FROM memory_atoms WHERE user_id=? AND status='active' "
-            f"AND embedding IS NOT NULL {model_filter} "
-            f"ORDER BY importance DESC LIMIT ?",
-            (*params, k * 20),
-        )
+        if user_id:
+            rows = await self.fetch(
+                f"SELECT * FROM memory_atoms WHERE user_id=? AND status='active' "
+                f"AND embedding IS NOT NULL {model_filter} "
+                f"ORDER BY importance DESC LIMIT ?",
+                (user_id, *params, k * 20),
+            )
+        else:
+            rows = await self.fetch(
+                f"SELECT * FROM memory_atoms WHERE status='active' "
+                f"AND embedding IS NOT NULL {model_filter} "
+                f"ORDER BY importance DESC LIMIT ?",
+                (*params, k * 20),
+            )
 
         if not rows:
             return []
@@ -403,17 +403,6 @@ class AtomStore(BaseDbStore, MemoryStore):
                 )
                 if crow and crow[0] and crow[0] not in related:
                     related.append(crow[0])
-        except Exception:
-            pass
-
-        # 方法2：直接查 user_registry 的别名
-        try:
-            for alias_key in [user_id, f"qq:{user_id}"]:
-                row = await self.fetchone(
-                    "SELECT user_name FROM user_registry WHERE user_id=?", (alias_key,)
-                )
-                if row and row[0] and row[0] not in related:
-                    related.append(row[0])
         except Exception:
             pass
 
@@ -548,52 +537,7 @@ class AtomStore(BaseDbStore, MemoryStore):
         )
 
     # ═══════════════════════════════════════════════════
-    #  用户注册表
-    # ═══════════════════════════════════════════════════
-
-    async def ensure_user(self, user_id: str, user_name: str = "") -> str:
-        """注册或更新用户名字，返回最终使用的名字"""
-        import time
-        now = time.time()
-        name = user_name.strip() or ""
-        async with self._connect() as db:
-            row = await db.execute_fetchall(
-                "SELECT user_name FROM user_registry WHERE user_id = ?", (user_id,)
-            )
-            if row:
-                old_name = row[0][0] or ""
-                # 名字变了才更新
-                if name and name != old_name:
-                    await db.execute(
-                        "UPDATE user_registry SET user_name=?, last_seen_at=?, name_updated_at=? WHERE user_id=?",
-                        (name, now, now, user_id),
-                    )
-                else:
-                    await db.execute(
-                        "UPDATE user_registry SET last_seen_at=? WHERE user_id=?",
-                        (now, user_id),
-                    )
-                display_name = name or old_name
-            else:
-                await db.execute(
-                    "INSERT INTO user_registry (user_id, user_name, first_seen_at, last_seen_at, name_updated_at) VALUES (?,?,?,?,?)",
-                    (user_id, name, now, now, now),
-                )
-                display_name = name or user_id
-            await db.commit()
-        return display_name
-
-    async def get_user_name(self, user_id: str) -> str:
-        """获取用户的可读名字"""
-        row = await self.fetchone(
-            "SELECT user_name FROM user_registry WHERE user_id = ?", (user_id,)
-        )
-        if row and row[0]:
-            return row[0]
-        return user_id
-
-    # ═══════════════════════════════════════════════════
-    #  身份体系（v2）
+    #  身份体系（v2：canonical_users + user_identities）
     # ═══════════════════════════════════════════════════
 
     async def ensure_canonical_user(self, platform_id: str, display_name: str = "",
@@ -649,6 +593,41 @@ class AtomStore(BaseDbStore, MemoryStore):
                 "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen,last_seen,verified,source) VALUES (?,?,?,?,?,?,1,'system')",
                 (f"bot:{bot_name}", "bot_hana", "memori", bot_name, now, now),
             )
+
+    # ═══════════════════════════════════════════════════
+    #  身份统一查询（canonical_users + user_identities）
+    # ═══════════════════════════════════════════════════
+
+    async def resolve_identity(self, platform_id: str) -> tuple[str, str] | None:
+        """platform_id → (uid, display_name)，JOIN 一次查询"""
+        try:
+            row = await self.fetchone("""
+                SELECT i.uid, COALESCE(u.primary_name, '')
+                FROM user_identities i
+                JOIN canonical_users u ON i.uid = u.uid
+                WHERE i.platform_id = ?
+            """, (platform_id,))
+            if row and row[0]:
+                return (row[0], row[1])
+        except Exception:
+            logger.exception(f"[AtomStore] resolve_identity({platform_id}) 异常")
+        return None
+
+    async def resolve_display_name(self, uid: str) -> str:
+        """uid → primary_name，查不到返回 '用户' + uid 后 4 位"""
+        try:
+            row = await self.fetchone(
+                "SELECT primary_name FROM canonical_users WHERE uid=?", (uid,)
+            )
+            if row and row[0]:
+                return row[0]
+        except Exception:
+            logger.exception(f"[AtomStore] resolve_display_name({uid}) 异常")
+        return f"用户{uid[-4:]}" if len(uid) >= 4 else "用户"
+
+    # ═══════════════════════════════════════════════════
+    #  画像查询
+    # ═══════════════════════════════════════════════════
 
     async def get_persona_summary(self, uid: str) -> str:
         """获取用户画像摘要（供注入用）"""

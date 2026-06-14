@@ -35,7 +35,7 @@ class CommandHandler(ICommandHandler):
         """处理 /日记 [日期]"""
         date_str = args[0] if args else time.strftime("%Y-%m-%d")
 
-        content = await self.diary_store.read(user_id, date_str)
+        content = await self.diary_store.read(date_str)
         if not content:
             return f"📔 {date_str} 还没有日记哦~"
         return f"📔 {date_str} 的日记：\n\n{content}"
@@ -44,13 +44,13 @@ class CommandHandler(ICommandHandler):
         """处理 /日记 列表 [年月]"""
         if len(args) >= 2:
             year, month = args[0], args[1].zfill(2)
-            dates = await self.diary_store.list_dates(user_id, year, month)
+            dates = await self.diary_store.list_dates(year, month)
             if not dates:
                 return f"📔 {year}年{month}月还没有日记~"
             lines = [d["date"] for d in dates]
             return f"📔 {year}年{month}月的日记：\n" + "\n".join(lines)
         else:
-            months = await self.diary_store.list_months(user_id)
+            months = await self.diary_store.list_months()
             if not months:
                 return "📔 还没有写过日记~"
             lines = [f"{m['year']}年{m['month']}月" for m in months]
@@ -124,14 +124,14 @@ class CommandHandler(ICommandHandler):
 
         if force_all:
             rows = await self.diary_store.fetch("""
-                SELECT d.id, d.date, d.content, d.user_id
+                SELECT d.id, d.date, d.content
                 FROM diary_entries d
                 WHERE length(d.content) > 20
                 ORDER BY d.id
             """)
         else:
             rows = await self.diary_store.fetch("""
-                SELECT d.id, d.date, d.content, d.user_id
+                SELECT d.id, d.date, d.content
                 FROM diary_entries d
                 WHERE (SELECT COUNT(*) FROM atoms_diary_links l WHERE l.diary_id=d.id) <= 1
                 AND length(d.content) > 20
@@ -156,7 +156,6 @@ class CommandHandler(ICommandHandler):
             did = row[0]
             date_str = row[1]
             content = row[2] or ""
-            row_user_id = row[3] or user_id
 
             if not force_all:
                 atoms = await self.atom_store.fetch(
@@ -177,7 +176,7 @@ class CommandHandler(ICommandHandler):
                 source_text = body if body else content
 
                 # 调用 LLM 提取原子
-                new_atoms = await self.capturer.extract_atoms_for_persona(source_text, row_user_id)
+                new_atoms = await self.capturer.extract_atoms_for_persona(source_text, user_id)
                 if not new_atoms:
                     skipped += 1
                     continue
@@ -194,7 +193,6 @@ class CommandHandler(ICommandHandler):
                 for atom in new_atoms:
                     atom.diary_id = did
                     atom.diary_date = date_str
-                    atom.user_id = row_user_id
                     atom.prepare_insert()
 
                 ids = await self.atom_store.insert_many(new_atoms)

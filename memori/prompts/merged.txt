@@ -97,9 +97,9 @@
 
 ### 示例
 ```json
-{"content": "Hako从零手搓开发了AI助手Hana", "entities": ["Hako", "Hana"], "diary_snippet": "我从零手搓开发了AI助手Hana"},
+{"content": "Hako从零手搓开发了我（AI助手）", "entities": ["Hako", "Hana"], "diary_snippet": "我从零手搓开发了AI助手Hana"},
 {"content": "Hako喜欢草莓味冰淇淋", "entities": ["Hako"], "diary_snippet": "Hako说喜欢草莓味冰淇淋"},
-{"content": "Hako和Bot约定2026-06-12一起去买冰淇淋", "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
+{"content": "Hako和我约定2026-06-12一起去买冰淇淋", "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
 ```
 
 ---

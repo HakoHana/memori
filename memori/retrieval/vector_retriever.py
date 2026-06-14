@@ -43,18 +43,19 @@ class VectorRetriever:
 
         Args:
             keywords: 关键词列表
-            user_ids: 用户 ID 列表（仅用第一个）
+            user_ids: 用户 ID 列表，为空 = 全库搜索
             k: 返回 top N
 
         Returns:
             按相似度降序排列的 MemoryAtom 列表
         """
-        if not self.embed or not keywords or not user_ids:
+        if not self.embed or not keywords:
             return []
 
         query = " ".join(keywords)
         query_embed = await self.embed.embed(query)
+        uid = user_ids[0] if user_ids else None
         return await self.atom_store.search_vector(
-            query_embed, user_ids[0], k=k,
+            query_embed, uid, k=k,
             model_name=type(self.embed).__name__,
         )

@@ -44,10 +44,10 @@ class Archiver:
         import time
         cutoff = time.time() - self.warm_days * 86400
         rows = await self.diary_store.fetch("""
-            SELECT id, user_id, date, content, importance, created_at
+            SELECT id, date, content, importance, created_at
             FROM diary_entries
             WHERE created_at < ? AND importance < ? AND archived = 0
-            ORDER BY user_id, date
+            ORDER BY date
         """, (cutoff, self.cold_importance))
 
         if not rows:
@@ -55,7 +55,7 @@ class Archiver:
 
         archived = 0
         for r in rows:
-            did, uid, date_str, content, imp, ts = r
+            did, date_str, content, imp, ts = r
             if dry_run:
                 logger.info(f"[Archive] [DRY] #{did} {date_str} imp={imp}")
                 archived += 1
@@ -67,7 +67,7 @@ class Archiver:
                 summary = (body or content or "")[:self.max_summary_chars]
 
                 # 写入冷存储
-                file_path = await self._write_cold(uid, date_str, content or "", did)
+                file_path = await self._write_cold(date_str, content or "", did)
 
                 # 更新 diary_entries
                 await self.diary_store.execute("""
@@ -85,14 +85,14 @@ class Archiver:
     async def export_diary(self, diary_id: int) -> str | None:
         """单篇日记导出为 Markdown（返回文件路径）"""
         row = await self.diary_store.fetchone(
-            "SELECT id, user_id, date, content FROM diary_entries WHERE id=?",
+            "SELECT id, date, content FROM diary_entries WHERE id=?",
             (diary_id,),
         )
         if not row:
             return None
-        return await self._write_cold(row[1], row[2], row[3], row[0])
+        return await self._write_cold(row[1], row[2], row[0])
 
-    async def _write_cold(self, uid: str, date_str: str, content: str,
+    async def _write_cold(self, date_str: str, content: str,
                            diary_id: int) -> str:
         """写入冷存储文件"""
         date_part = date_str.replace("-", "")[:6] if date_str else "unknown"
@@ -101,7 +101,7 @@ class Archiver:
         year = date_str[:4] if date_str else "unknown"
         month = date_str[5:7] if date_str else "00"
 
-        dir_path = self.archive_dir / f"u_{uid}" / year / month
+        dir_path = self.archive_dir / "diary" / year / month
         dir_path.mkdir(parents=True, exist_ok=True)
         file_path = dir_path / f"{date_str}.md"
 
@@ -121,15 +121,15 @@ class Archiver:
     async def restore_from_archive(self, diary_id: int) -> str | None:
         """从冷存储恢复原日记内容"""
         row = await self.diary_store.fetchone(
-            "SELECT user_id, date FROM diary_entries WHERE id=? AND archived=1",
+            "SELECT date FROM diary_entries WHERE id=? AND archived=1",
             (diary_id,),
         )
         if not row:
             return None
-        uid, date_str = row
+        date_str = row[0]
         year = date_str[:4]
         month = date_str[5:7]
-        file_path = self.archive_dir / f"u_{uid}" / year / month / f"{date_str}.md"
+        file_path = self.archive_dir / "diary" / year / month / f"{date_str}.md"
         if not file_path.exists():
             return None
 

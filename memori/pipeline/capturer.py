@@ -51,6 +51,7 @@ class Capturer(ICapturer):
         self.on_atoms_created = on_atoms_created
         self.embed_provider = embed_provider
         self.atom_store = store._atom
+        self._entity_uid_cache: dict[str, str] = {}  # 显示名 → canonical uid（懒加载）
         self.lifecycle = None  # LifecycleManager（由外部注入，无则跳过去重）
 
         # 构建 Capture 流水线步骤（策略链）
@@ -61,6 +62,7 @@ class Capturer(ICapturer):
         ))
         self._capture_steps.append(AtomClassifyStep(
             use_rule_classifier=self.config.get("enable_rule_classifier", True),
+            entity_uid_cache=self._entity_uid_cache,
         ))
         self._capture_steps.append(DiaryFillStep())
         self._capture_steps.append(TruncateStep(
@@ -122,7 +124,7 @@ class Capturer(ICapturer):
                 "topics": [judge_result.reason] if judge_result.reason else [],
             }
             diary_content = build_diary_content(fm, diary_body)
-            diary_id = await self._store.append_diary(user_id, today, diary_content)
+            diary_id = await self._store.append_diary(today, diary_content)
             if op_id:
                 await self._store.step_op(op_id, "diary_written")
 
@@ -308,7 +310,7 @@ class Capturer(ICapturer):
 
         try:
             result_str = await self.llm.chat(prompt, diary_content)
-            atoms = self._parse_atoms(result_str, user_id, diary_date)
+            atoms = await self._parse_atoms(result_str, user_id, diary_date)
             # 按重要度降序取 top 5
             atoms.sort(key=lambda a: a.importance, reverse=True)
             return atoms[:5]
@@ -478,7 +480,36 @@ class Capturer(ICapturer):
                 pass
         return None
 
-    def _convert_merged_atoms(
+    async def _resolve_entity_uid(self, entity_name: str) -> str | None:
+        """根据实体名查 canonical uid"""
+        if entity_name in self._entity_uid_cache:
+            return self._entity_uid_cache[entity_name]
+        try:
+            row = await self.atom_store.fetchone(
+                "SELECT uid FROM canonical_users WHERE primary_name=?", (entity_name,)
+            )
+            if row:
+                self._entity_uid_cache[entity_name] = row[0]
+                return row[0]
+            self._entity_uid_cache[entity_name] = ""  # 缓存未命中
+        except Exception:
+            pass
+        return None
+
+    async def _pick_atom_user_id(self, entities: list, trigger_uid: str) -> str:
+        """从实体列表选出原子的归属 uid（谁的事实）"""
+        if not entities:
+            return trigger_uid
+        for ent in entities:
+            if isinstance(ent, str):
+                uid = self._entity_uid_cache.get(ent)
+                if uid is None:  # 未查过
+                    uid = await self._resolve_entity_uid(ent)
+                if uid and uid != trigger_uid:
+                    return uid
+        return trigger_uid
+
+    async def _convert_merged_atoms(
         self, raw_atoms: list[dict], user_id: str, diary_date: str
     ) -> list[MemoryAtom]:
         """将合并响应中的 atoms 转换为 MemoryAtom 对象"""
@@ -490,13 +521,15 @@ class Capturer(ICapturer):
             if not content:
                 continue
             try:
+                entities = item.get("entities", [])
+                atom_uid = await self._pick_atom_user_id(entities, user_id)
                 atoms.append(MemoryAtom(
-                    user_id=user_id,
+                    user_id=atom_uid,
                     diary_date=diary_date,
                     content=content,
                     atom_type=AtomType(item.get("type", "unknown")),
                     importance=float(item.get("importance", 0.5)),
-                    entities=item.get("entities", []),
+                    entities=entities,
                     confidence=float(item.get("confidence", 0.7)),
                     diary_snippet=item.get("diary_snippet", ""),
                 ))
@@ -518,7 +551,7 @@ class Capturer(ICapturer):
         except Exception:
             return CaptureJudgeResult(should_remember=False)
 
-    def _parse_atoms(self, text: str, user_id: str, diary_date: str) -> list[MemoryAtom]:
+    async def _parse_atoms(self, text: str, user_id: str, diary_date: str) -> list[MemoryAtom]:
         """解析 LLM 返回的原子 JSON"""
         atoms = []
         try:
@@ -527,8 +560,10 @@ class Capturer(ICapturer):
             if isinstance(raw_atoms, list):
                 for item in raw_atoms:
                     if isinstance(item, dict) and "content" in item:
+                        entities = item.get("entities", [])
+                        atom_uid = await self._pick_atom_user_id(entities, user_id)
                         atoms.append(MemoryAtom(
-                            user_id=user_id,
+                            user_id=atom_uid,
                             diary_date=diary_date,
                             content=item["content"],
                             atom_type=AtomType(item.get("type", "unknown")),

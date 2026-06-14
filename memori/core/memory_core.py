@@ -386,7 +386,7 @@ class MemoryCore:
                         for issue in r.get("issues", []):
                             logger.warning(f"[Memoria] 索引检查: {issue}")
 
-            # 孤立原子检查（分库后需跨 atom_store + diary_store）
+            # 孤立原子检查
             if self.atom_store and self.diary_store:
                 try:
                     orphan_rows = await self.atom_store.fetch(
@@ -396,11 +396,8 @@ class MemoryCore:
                     orphan_count = 0
                     for (date_str,) in orphan_rows:
                         row = await self.diary_store.fetchone(
-                            "SELECT 1 FROM diary_entries WHERE date=? "
-                            "AND user_id IN ("
-                            "  SELECT user_id FROM memory_atoms WHERE diary_date=? LIMIT 1"
-                            ")",
-                            (date_str, date_str),
+                            "SELECT 1 FROM diary_entries WHERE date=? LIMIT 1",
+                            (date_str,),
                         )
                         if not row:
                             orphan_count += 1
@@ -564,67 +561,6 @@ class MemoryCore:
                 await asyncio.sleep(3600)
 
     # ═══════════════════════════════════════════════════
-    #  用户分层 + 消息过滤
-    # ═══════════════════════════════════════════════════
-
-    KEYWORD_TRIGGER = {"记住", "别忘了", "喜欢", "教我", "帮我", "拜托",
-                       "SC", "舰长", "关注", "谢谢", "投喂", "礼物", "订阅"}
-
-    async def _get_tier(self, user_id: str) -> str:
-        try:
-            row = await self.atom_store.fetchone(
-                "SELECT tier FROM user_persona WHERE uid=?", (user_id,)
-            )
-            if row and row[0]:
-                return row[0]
-        except Exception:
-            pass
-        return "new"
-
-    async def _maybe_update_tier(self, user_id: str):
-        try:
-            row = await self.atom_store.fetchone(
-                "SELECT diary_count_since_full FROM user_persona WHERE uid=?",
-                (user_id,),
-            )
-            if row and row[0] is not None and row[0] < 10:
-                return
-            now = time.time()
-            recent = await self.diary_store.fetchone(
-                "SELECT COUNT(*) FROM diary_entries WHERE user_id=? AND created_at > ?",
-                (user_id, now - 30 * 86400),
-            )
-            msg_count = recent[0] if recent else 0
-            if msg_count >= 10:
-                tier = "core"
-            elif msg_count >= 5:
-                tier = "active"
-            elif msg_count >= 1:
-                tier = "occasional"
-            else:
-                tier = "new"
-            await self.atom_store.execute(
-                "UPDATE user_persona SET tier=?, diary_count_since_full=0 WHERE uid=?",
-                (tier, user_id),
-            )
-        except Exception:
-            pass
-
-    async def should_ignore(self, user_id: str, text: str) -> bool:
-        tier = await self._get_tier(user_id)
-        if tier in ("core", "active"):
-            return False
-        if len(text) < 3:
-            return True
-        if len(set(text)) / max(len(text), 1) < 0.4:
-            return True
-        if all(c in "😂😍😊😭😘🥰😁😅🤣😏🙏💕✨😌😔😤😴🤔👀🔥" for c in text.strip()):
-            return True
-        if any(kw in text for kw in self.KEYWORD_TRIGGER):
-            return False
-        return True
-
-    # ═══════════════════════════════════════════════════
     #  对外 API
     # ═══════════════════════════════════════════════════
 
@@ -723,7 +659,7 @@ class MemoryCore:
             "topics": topics or [],
         }
         diary_content = build_diary_content(fm, memory)
-        diary_id = await self.diary_store.append(user_id, today, diary_content)
+        diary_id = await self.diary_store.append(today, diary_content)
 
         # 2. 原子分类 + 落库
         atoms: list[MemoryAtom] = []

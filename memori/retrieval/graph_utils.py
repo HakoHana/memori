@@ -14,25 +14,39 @@ async def fetch_atoms_from_diaries(
     k: int,
     score_multiplier: float = 1.0,
 ) -> list[MemoryAtom]:
-    """从日记 ID 取关联原子（通过 atoms_diary_links 桥表）"""
+    """从日记 ID 取关联原子（通过 atoms_diary_links 桥表）
+
+    user_ids 为空时全库搜索（不限 user_id）。
+    """
     if not diary_ids:
         return []
 
     did_placeholders = ",".join("?" for _ in diary_ids)
-    uid_placeholders = ",".join("?" for _ in user_ids)
-
     order_by = "d.importance DESC" if score_multiplier == 1.0 else f"({score_multiplier} * d.importance) DESC"
+
     try:
-        atom_rows = await atom_store.fetch(
-            f"""SELECT a.* FROM memory_atoms a
-                JOIN atoms_diary_links d ON a.id = d.atom_id
-                WHERE d.diary_id IN ({did_placeholders})
-                  AND a.user_id IN ({uid_placeholders})
-                  AND a.status = 'active'
-                ORDER BY {order_by}
-                LIMIT ?""",
-            (*diary_ids, *user_ids, k),
-        )
+        if user_ids:
+            uid_placeholders = ",".join("?" for _ in user_ids)
+            atom_rows = await atom_store.fetch(
+                f"""SELECT a.* FROM memory_atoms a
+                    JOIN atoms_diary_links d ON a.id = d.atom_id
+                    WHERE d.diary_id IN ({did_placeholders})
+                      AND a.user_id IN ({uid_placeholders})
+                      AND a.status = 'active'
+                    ORDER BY {order_by}
+                    LIMIT ?""",
+                (*diary_ids, *user_ids, k),
+            )
+        else:
+            atom_rows = await atom_store.fetch(
+                f"""SELECT a.* FROM memory_atoms a
+                    JOIN atoms_diary_links d ON a.id = d.atom_id
+                    WHERE d.diary_id IN ({did_placeholders})
+                      AND a.status = 'active'
+                    ORDER BY {order_by}
+                    LIMIT ?""",
+                (*diary_ids, k),
+            )
         if atom_rows:
             return [atom_store._row_to_atom(r) for r in atom_rows]
     except Exception:

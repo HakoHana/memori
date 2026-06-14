@@ -96,15 +96,23 @@ class PersonaEngine(IPersonaEngine):
         """
         old_summary = await self.atom_store.get_persona_summary(uid) or "（还没有画像）"
 
-        # 没有传入新数据时自动查询
+        # 没有传入新数据时自动查询（通过原子找到关联日记，日记无归属）
         if not new_diaries and not new_facts:
-            recent = await self.diary_store.fetch("""
-                SELECT content FROM diary_entries
-                WHERE user_id=? ORDER BY id DESC LIMIT 5
-            """, (uid,))
-            new_diaries = [(r[0] or "")[:200] for r in recent]
-            # 没有事实更新时先跳过（增量更新只在新内容出现时才有意义）
-            if not new_diaries:
+            recent_atoms = await self.atom_store.fetch(
+                "SELECT diary_id, content FROM memory_atoms WHERE user_id=? AND status='active' ORDER BY id DESC LIMIT 10",
+                (uid,),
+            )
+            if recent_atoms:
+                diary_ids = list({r[0] for r in recent_atoms if r[0]})
+                if diary_ids:
+                    ph = ",".join("?" for _ in diary_ids[:5])
+                    rows = await self.diary_store.fetch(
+                        f"SELECT content FROM diary_entries WHERE id IN ({ph}) ORDER BY id DESC",
+                        diary_ids[:5],
+                    )
+                    new_diaries = [(r[0] or "")[:200] for r in rows]
+                new_facts = [r[1] or "" for r in recent_atoms[:10] if r[1]]
+            if not new_diaries and not new_facts:
                 return False
 
         old_row = await self.atom_store.fetchone(
@@ -235,11 +243,15 @@ class PersonaEngine(IPersonaEngine):
     #  工具
     # ═══════════════════════════════════════════════════
 
-    async def _get_recent_diaries_batch(self, user_id: str, count: int = 5) -> str:
-        rows = await self.diary_store.fetch("""
-            SELECT date, content FROM diary_entries
-            WHERE user_id = ? ORDER BY date DESC LIMIT ?
-        """, (user_id, count))
+    async def _get_recent_diaries_batch(self, uid: str, count: int = 5) -> str:
+        # 通过原子的 user_id 找关联日记（日记无归属）
+        rows = await self.atom_store.fetch("""
+            SELECT DISTINCT d.date, d.content FROM diary_entries d
+            JOIN atoms_diary_links l ON d.id = l.diary_id
+            JOIN memory_atoms a ON a.id = l.atom_id
+            WHERE a.user_id = ? AND a.status = 'active'
+            ORDER BY d.id DESC LIMIT ?
+        """, (uid, count))
         if not rows:
             return ""
         entries = []

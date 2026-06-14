@@ -99,30 +99,20 @@ class PageService:
         except Exception as e:
             return self._error(str(e))
 
-    async def list_memories(self, uid: str, page: int = 1, size: int = 20) -> dict:
-        """日记列表（分页）"""
+    async def list_memories(self, page: int = 1, size: int = 20) -> dict:
+        """日记列表（分页，全库）"""
         try:
             offset = (page - 1) * size
-            if uid:
-                rows = await self._db_diary.fetch(
-                    "SELECT id, user_id, date, importance, sentiment, topics, created_at "
-                    "FROM diary_entries WHERE user_id=? ORDER BY date DESC LIMIT ? OFFSET ?",
-                    (uid, size, offset),
-                )
-                total = (await self._db_diary.fetchone(
-                    "SELECT COUNT(*) FROM diary_entries WHERE user_id=?", (uid,)
-                ))[0]
-            else:
-                rows = await self._db_diary.fetch(
-                    "SELECT id, user_id, date, importance, sentiment, topics, created_at "
-                    "FROM diary_entries ORDER BY date DESC LIMIT ? OFFSET ?",
-                    (size, offset),
-                )
-                total = (await self._db_diary.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
+            rows = await self._db_diary.fetch(
+                "SELECT id, date, importance, sentiment, topics, created_at "
+                "FROM diary_entries ORDER BY date DESC LIMIT ? OFFSET ?",
+                (size, offset),
+            )
+            total = (await self._db_diary.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
 
             items = []
             for r in rows:
-                topics_raw = r[5]
+                topics_raw = r[4]
                 topics = []
                 if topics_raw:
                     try:
@@ -130,9 +120,9 @@ class PageService:
                     except Exception:
                         topics = [str(topics_raw)]
                 items.append({
-                    "id": r[0], "user_id": r[1], "date": r[2],
-                    "importance": r[3], "sentiment": r[4], "topics": topics,
-                    "created_at": fmt_ts(r[6]),
+                    "id": r[0], "date": r[1],
+                    "importance": r[2], "sentiment": r[3], "topics": topics,
+                    "created_at": fmt_ts(r[5]),
                 })
             return self._ok({"items": items, "total": total, "page": page, "size": size})
         except Exception as e:
@@ -141,13 +131,9 @@ class PageService:
     async def get_memory_detail(self, entry_id: int) -> dict:
         """日记详情"""
         try:
-            row = await self._db_diary.fetchone("SELECT * FROM diary_entries WHERE id=?", (entry_id,))
-            if not row:
+            diary = await self.core.diary_store.get_by_id(entry_id)
+            if not diary:
                 return self._error("not found")
-            columns = ["id", "uid", "user_id", "date", "timestamp", "content", "importance",
-                       "mood", "topics", "sentiment", "fact_extracted", "fact_retry_count",
-                       "archived", "correction", "created_at"]
-            diary = dict(zip(columns, row))
             diary['created_at'] = fmt_ts(diary['created_at'])
             atoms = await self._db.fetch(
                 "SELECT a.id, a.content, a.atom_type, a.importance FROM memory_atoms a "
@@ -225,47 +211,43 @@ class PageService:
         except Exception as e:
             return self._error(str(e))
 
-    async def get_timeline(self, uid: str, year: str = "", month: str = "") -> dict:
-        """记忆时间线"""
+    async def get_timeline(self, year: str = "", month: str = "") -> dict:
+        """记忆时间线（全库）"""
         try:
-            if not uid:
-                return self._error("uid is required")
             if year and month:
                 ym = f"{year}-{int(month):02d}"
                 rows = await self._db_diary.fetch(
-                    "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
-                    (uid, f"{ym}%"),
+                    "SELECT DISTINCT date FROM diary_entries WHERE date LIKE ? ORDER BY date DESC",
+                    (f"{ym}%",),
                 )
             elif year:
                 rows = await self._db_diary.fetch(
-                    "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
-                    (uid, f"{year}%"),
+                    "SELECT DISTINCT date FROM diary_entries WHERE date LIKE ? ORDER BY date DESC",
+                    (f"{year}%",),
                 )
             else:
                 rows = await self._db_diary.fetch(
-                    "SELECT DISTINCT date FROM diary_entries WHERE user_id=? ORDER BY date DESC LIMIT 100",
-                    (uid,),
+                    "SELECT DISTINCT date FROM diary_entries ORDER BY date DESC LIMIT 100"
                 )
             return self._ok([r[0] for r in rows])
         except Exception as e:
             return self._error(str(e))
 
-    async def get_day_detail(self, uid: str, date: str) -> dict:
+    async def get_day_detail(self, date: str) -> dict:
         """获取指定日期日记"""
         try:
-            if not uid or not date:
-                return self._error("uid and date required")
+            if not date:
+                return self._error("date required")
             date = self._parse_date(date)
-            row = await self._db.fetchone(
-                "SELECT * FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
-                (uid, date),
+            row = await self._db_diary.fetchone(
+                "SELECT id FROM diary_entries WHERE date=? ORDER BY id DESC LIMIT 1",
+                (date,),
             )
             if not row:
                 return self._ok(None)
-            columns = ["id", "uid", "user_id", "date", "timestamp", "content", "importance",
-                       "mood", "topics", "sentiment", "fact_extracted", "fact_retry_count",
-                       "archived", "correction", "created_at"]
-            diary = dict(zip(columns, row))
+            diary = await self.core.diary_store.get_by_id(row[0])
+            if not diary:
+                return self._ok(None)
             diary['created_at'] = fmt_ts(diary['created_at'])
             atoms = await self._db.fetch(
                 "SELECT a.id, a.content, a.atom_type, a.importance FROM memory_atoms a "
@@ -278,29 +260,29 @@ class PageService:
         except Exception as e:
             return self._error(str(e))
 
-    async def get_diary(self, entry_id: int = 0, uid: str = "", date: str = "") -> dict:
+    async def get_diary(self, entry_id: int = 0, date: str = "") -> dict:
         """获取日记内容"""
         try:
             if entry_id:
                 row = await self._db_diary.fetchone("SELECT content FROM diary_entries WHERE id=?", (entry_id,))
-            elif uid and date:
+            elif date:
                 date = self._parse_date(date)
-                row = await self._db.fetchone(
-                    "SELECT content FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
-                    (uid, date),
+                row = await self._db_diary.fetchone(
+                    "SELECT content FROM diary_entries WHERE date=? ORDER BY id DESC LIMIT 1",
+                    (date,),
                 )
             else:
-                return self._error("id or uid+date required")
+                return self._error("id or date required")
             content = row[0] if row else ""
             return self._ok({"content": content})
         except Exception as e:
             return self._error(str(e))
 
-    async def update_diary(self, user_id: str, date: str, content: str) -> dict:
+    async def update_diary(self, date: str, content: str) -> dict:
         """更新日记"""
         try:
             from ..utils.diary_helper import parse_diary_content, mood_to_sentiment
-            await self.core.diary_store.upsert(user_id, date, content)
+            await self.core.diary_store.upsert(date, content)
             fm, _ = parse_diary_content(content)
             updates = {}
             if "mood" in fm:
@@ -312,7 +294,7 @@ class PageService:
                 if isinstance(topics, list):
                     updates["topics"] = json.dumps(topics, ensure_ascii=False)
             if updates:
-                await self.core.diary_store.update_metadata(user_id, date, **updates)
+                await self.core.diary_store.update_metadata(date, **updates)
             return self._ok({"saved": True})
         except Exception as e:
             return self._error(str(e))
@@ -387,29 +369,19 @@ class PageService:
         except Exception as e:
             return self._error(str(e))
 
-    async def list_archived(self, uid: str, page: int = 1, size: int = 20) -> dict:
-        """归档列表"""
+    async def list_archived(self, page: int = 1, size: int = 20) -> dict:
+        """归档列表（全库）"""
         try:
             offset = (page - 1) * size
-            if uid:
-                rows = await self._db_diary.fetch(
-                    "SELECT id, user_id, date, importance FROM diary_entries "
-                    "WHERE user_id=? AND archived=1 ORDER BY date DESC LIMIT ? OFFSET ?",
-                    (uid, size, offset),
-                )
-                total = (await self._db_diary.fetchone(
-                    "SELECT COUNT(*) FROM diary_entries WHERE user_id=? AND archived=1", (uid,)
-                ))[0]
-            else:
-                rows = await self._db_diary.fetch(
-                    "SELECT id, user_id, date, importance FROM diary_entries "
-                    "WHERE archived=1 ORDER BY date DESC LIMIT ? OFFSET ?",
-                    (size, offset),
-                )
-                total = (await self._db_diary.fetchone(
-                    "SELECT COUNT(*) FROM diary_entries WHERE archived=1"
-                ))[0]
-            items = [{"id": r[0], "user_id": r[1], "date": r[2], "importance": r[3]} for r in rows]
+            rows = await self._db_diary.fetch(
+                "SELECT id, date, importance FROM diary_entries "
+                "WHERE archived=1 ORDER BY date DESC LIMIT ? OFFSET ?",
+                (size, offset),
+            )
+            total = (await self._db_diary.fetchone(
+                "SELECT COUNT(*) FROM diary_entries WHERE archived=1"
+            ))[0]
+            items = [{"id": r[0], "date": r[1], "importance": r[2]} for r in rows]
             return self._ok({"items": items, "total": total, "page": page, "size": size})
         except Exception as e:
             return self._error(str(e))

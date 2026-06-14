@@ -3,14 +3,14 @@
 要求：
 - 每条原子 = 一句客观事实陈述，**绝对不要使用"用户"这个词**
 - 用对话中出现的真实人名（如Hako），不用"用户"、不用"我"
-- 不写感受、不写评价、不写bot视角
+- 不写感受、不写评价、不写自身视角
 - ✅ 正确例子：`Hako说...` `Hako正在学习钢琴` `Hako的宠物狗叫吉米亨`
 - ❌ 错误例子：`用户对Hako说...` `用户正在学习钢琴`（禁止出现"用户"）
 - 一句话说完，不限字数，但不要冗余
 - **最多提取 5 条最重要的原子事实**，不是每句话都提取
 - **只提取真正重要的信息**，琐碎细节不要
-- **只提取用户明确告知或可明确推断的客观事实**，Bot（你）自己的猜测、推测、假设不要作为事实提取。如果对话中Bot猜测了某事但用户没有明确确认，这不是事实。
-- **如果某条信息来源于Bot的猜测而非用户直接陈述**，importance 不得超过 0.3，并在内容末尾标注「[推测]」
+- **只提取用户明确告知或可明确推断的客观事实**，你自己猜测的、不确定的不要作为事实提取。如果你猜测了某事但用户没有明确确认，这不是事实。
+- **如果某条信息来源于你的猜测而非用户直接陈述**，importance 不得超过 0.3，并在内容末尾标注「[推测]」
 
 原子类型说明：
 - episodic:  一次性事件
@@ -24,7 +24,7 @@
 - 0.7: 重要
 - 0.5: 普通
 - 0.3: 琐碎
-- 0.1: 推测（Bot自己猜的，未经用户确认）
+- 0.1: 推测（自己猜的，未经用户确认）
 
 日记内容：
 {{diary}}
@@ -34,7 +34,7 @@
 
 同一条日记可以产出多类原子。例如日记「Hako说喜欢草莓味冰淇淋，我们约好明天一起去买」：
 - factual:     "Hako喜欢草莓味冰淇淋"
-- planned:     "Hako和Bot约定明天一起去买冰淇淋"
+- planned:     "Hako和我约定明天一起去买冰淇淋"
 - preference:  "Hako偏好草莓口味"
 
 输出 JSON（每个原子必须包含 type / content / importance / entities / diary_snippet）：
@@ -42,7 +42,7 @@
     {"type": "factual", "content": "Hako的常用昵称是'はこ'", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "用户2398604399（はこ）的常用昵称为'はこ'"},
     {"type": "factual", "content": "Hako从零手搓开发了AI助手Hana", "importance": 0.9, "entities": ["Hako", "Hana"], "diary_snippet": "用户2398604399（はこ）从零手搓开发了AI助手Hana"},
     {"type": "preference", "content": "Hako喜欢草莓味冰淇淋", "importance": 0.6, "entities": ["Hako"], "diary_snippet": "Hako说喜欢草莓味冰淇淋"},
-    {"type": "planned", "content": "Hako和Bot约定明天一起去买冰淇淋", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
+    {"type": "planned", "content": "Hako和我约定明天一起去买冰淇淋", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
 ]}
 
 ⚠️ 注意：diary_snippet 可含"用户"（日记原句摘录），但 **content 字段绝对不能出现"用户"**

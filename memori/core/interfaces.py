@@ -77,8 +77,8 @@ class IRetriever(ABC):
         ...
 
     @abstractmethod
-    async def search_diaries(self, user_id: str, query: str, k: int = 5) -> list[dict]:
-        """搜索日记全文"""
+    async def search_diaries(self, query: str, k: int = 5) -> list[dict]:
+        """搜索日记全文（全库，不按用户过滤）"""
         ...
 
     @abstractmethod

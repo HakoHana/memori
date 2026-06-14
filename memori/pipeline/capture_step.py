@@ -85,8 +85,21 @@ class AtomClassifyStep(CaptureStep):
     def __init__(
         self,
         use_rule_classifier: bool = True,
+        entity_uid_cache: dict[str, str] | None = None,
     ):
         self.use_rule_classifier = use_rule_classifier
+        self._entity_uid_cache = entity_uid_cache or {}  # 显示名 → canonical uid
+
+    async def _resolve_user_id(self, entities: list, trigger_uid: str) -> str:
+        """从实体列表选出原子的归属 uid"""
+        if not entities or not self._entity_uid_cache:
+            return trigger_uid
+        for ent in entities:
+            if isinstance(ent, str):
+                uid = self._entity_uid_cache.get(ent)
+                if uid and uid != trigger_uid:
+                    return uid
+        return trigger_uid
 
     async def process(self, ctx: CaptureContext) -> CaptureContext:
         if not ctx.raw_atom_dicts:
@@ -108,23 +121,35 @@ class AtomClassifyStep(CaptureStep):
                 user_id=ctx.user_id,
                 diary_date=ctx.diary_date,
             )
-            # 补回 diary_snippet
+            # 补回 diary_snippet + 修正 user_id（根据 entities）
             snippet_map: dict[str, str] = {}
             for a in ctx.raw_atom_dicts:
                 content = a.get("content", "").strip()
                 snippet = a.get("diary_snippet", "").strip()
                 if content and snippet:
                     snippet_map[content] = snippet
+                if content and self._entity_uid_cache:
+                    atom_uid = await self._resolve_user_id(
+                        a.get("entities", []), ctx.user_id
+                    )
+                    for atom in atoms:
+                        if atom.content == content:
+                            atom.user_id = atom_uid
             for atom in atoms:
                 if atom.content in snippet_map:
                     atom.diary_snippet = snippet_map[atom.content]
         else:
             # 回退：简单类型转换
-            atoms = [
-                self._dict_to_atom(a, ctx.user_id, ctx.diary_date)
-                for a in ctx.raw_atom_dicts
-                if isinstance(a, dict) and a.get("content")
-            ]
+            atoms = []
+            for a in ctx.raw_atom_dicts:
+                if not isinstance(a, dict) or not a.get("content"):
+                    continue
+                atom_uid = await self._resolve_user_id(
+                    a.get("entities", []), ctx.user_id
+                )
+                atom = self._dict_to_atom(a, atom_uid, ctx.diary_date)
+                if atom:
+                    atoms.append(atom)
 
         ctx.atoms = atoms
         return ctx

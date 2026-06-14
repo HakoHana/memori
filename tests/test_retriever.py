@@ -156,7 +156,7 @@ class TestRetriever:
 
     async def test_search_diaries_no_store(self, retriever):
         retriever.diary_store = None
-        result = await retriever.search_diaries("user1", "查询", k=5)
+        result = await retriever.search_diaries("查询", k=5)
         assert result == []
 
     async def test_hybrid_search(self, retriever):

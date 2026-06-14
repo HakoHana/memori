@@ -180,44 +180,31 @@ class MemoriPlugin(Star):
             pass
         return ""
 
-    async def _ensure_user_identity(self, user_id: str, event_sender_name: str = "") -> str:
-        """查表 → 没有则创建 → 返回规范显示名
+    async def _ensure_user_identity(self, user_id: str, event_sender_name: str = "") -> tuple[str, str]:
+        """查/建 canonical uid → 返回 (canonical_uid, display_name)
 
-        顺序：
-        1. 查 user_identities 有无此人的 canonical uid
-        2. 有 → 取 canonical_users.primary_name
-        3. 无 → 建新 uid + 注册 user_registry
-        4. 返回最终显示名
+        所有内部存储操作必须使用 canonical_uid，显示名只对 LLM/用户展示用。
         """
         if not self.core or not self.core.atom_store:
-            return event_sender_name or f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+            display = event_sender_name or (f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户")
+            return (user_id, display)
 
         try:
             platform_id = f"qq:{user_id}"
-            # 1. 查 canonical uid
-            row = await self.core.atom_store.fetchone(
-                "SELECT uid FROM user_identities WHERE platform_id=?", (platform_id,)
-            )
+            result = await self.core.atom_store.resolve_identity(platform_id)
 
-            if row:
-                cuid = row[0]
-                # 已有身份，取规范名
-                crow = await self.core.atom_store.fetchone(
-                    "SELECT primary_name FROM canonical_users WHERE uid=?", (cuid,)
-                )
-                name = (crow[0] or event_sender_name or "") if crow else (event_sender_name or "")
+            if result:
+                cuid, name = result
                 if not name:
-                    name = f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+                    name = event_sender_name or (f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户")
                 # 更新最后活跃
                 await self.core.atom_store.execute(
                     "UPDATE user_identities SET display_name=?, last_seen=? WHERE platform_id=?",
                     (name, time.time(), platform_id),
                 )
-                # 确保 user_registry 存在
-                await self.core.atom_store.ensure_user(user_id, name)
-                return name
+                return (cuid, name)
 
-            # 2. 新用户：创建 canonical uid
+            # 新用户
             import uuid
             cuid = "u_" + uuid.uuid4().hex[:12]
             now = time.time()
@@ -232,12 +219,12 @@ class MemoriPlugin(Star):
                 "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen, last_seen, source) VALUES (?,?,?,?,?,?,?)",
                 (platform_id, cuid, "qq", name, now, now, "auto"),
             )
-            await self.core.atom_store.ensure_user(user_id, name)
-            return name
+            return (cuid, name)
 
         except Exception as e:
             logger.warning(f"[memori] _ensure_user_identity 异常: {e}")
-            return event_sender_name or f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+            display = event_sender_name or (f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户")
+            return (user_id, display)
 
     # ── 记忆注入：LLM 请求前 ──
 
@@ -256,15 +243,14 @@ class MemoriPlugin(Star):
                 event.message_str = ""
             return
 
-        uid = AstrBotCtx().get_user_id(event)
-        sender_name = await self._ensure_user_identity(uid, self._get_sender_name(event))
+        raw_uid = AstrBotCtx().get_user_id(event)
+        cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event))
 
-        # 热缓存由 process_message 内部推入，此处不再重复 push
         system_prompt = getattr(event, "system_prompt", "") or ""
         result = await self.core.process_message(
-            user_id=uid,
+            user_id=cuid,
             message_text=raw_text,
-            sender_name=sender_name,
+            sender_name=display_name,
             system_prompt=system_prompt,
         )
 
@@ -281,11 +267,11 @@ class MemoriPlugin(Star):
         if not self.core:
             return
         try:
-            uid = AstrBotCtx().get_user_id(event)
+            raw_uid = AstrBotCtx().get_user_id(event)
             txt = AstrBotCtx().get_conversation_text(event)
-            sender_name = await self._ensure_user_identity(uid, self._get_sender_name(event))
+            cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event))
 
-            if not uid or not txt or txt.startswith("/"):
+            if not cuid or not txt or txt.startswith("/"):
                 return
 
             # 1. 写入 conversations.db（持久化）
@@ -293,16 +279,17 @@ class MemoriPlugin(Star):
                 try:
                     await self.core.conversation_store.add_message(
                         session_id=event.unified_msg_origin,
-                        user_id=uid,
+                        user_id=cuid,
                         role="user",
                         content=txt,
+                        sender_name=display_name,
                     )
                 except Exception:
                     pass
 
             # 3. 更新活动时间（供空闲超时使用）
             task = asyncio.ensure_future(
-                self.core.consolidation_manager.on_message(uid, txt, sender_name)
+                self.core.consolidation_manager.on_message(cuid, txt, display_name)
             )
             self.core._background_tasks.add(task)
             task.add_done_callback(self.core._background_tasks.discard)
@@ -317,7 +304,8 @@ class MemoriPlugin(Star):
             return
         try:
             if response:
-                uid = AstrBotCtx().get_user_id(event)
+                raw_uid = AstrBotCtx().get_user_id(event)
+                cuid, _ = await self._ensure_user_identity(raw_uid)
                 resp_text = ""
                 if hasattr(response, "result_chain") and response.result_chain:
                     resp_text = response.result_chain.get_plain_text() or ""
@@ -327,17 +315,17 @@ class MemoriPlugin(Star):
                         try:
                             await self.core.conversation_store.add_message(
                                 session_id=event.unified_msg_origin,
-                                user_id=uid,
+                                user_id=cuid,
                                 role="assistant",
                                 content=resp_text,
                             )
                         except Exception:
                             pass
 
-                    # 累计一轮对话 → 可能触发整理（从 DB 拉上下文）
+                    # 累计一轮对话 → 可能触发整理
                     try:
                         await self.core.consolidation_manager.on_round_complete(
-                            uid, session_id=event.unified_msg_origin,
+                            cuid, session_id=event.unified_msg_origin,
                         )
                     except Exception:
                         pass

@@ -32,13 +32,13 @@ class BM25Retriever:
 
         Args:
             keywords: 关键词列表（已分词去停用词）
-            user_ids: 用户 ID 列表（含关联身份）
+            user_ids: 用户 ID 列表，为空 = 全库搜索（不限 user_id）
             k: 返回 top N
 
         Returns:
             按重要度降序排列的 MemoryAtom 列表
         """
-        if not keywords or not user_ids:
+        if not keywords:
             return []
 
         # 分拣：英文/数字 → FTS5，中文 → LIKE
@@ -52,11 +52,16 @@ class BM25Retriever:
         if ascii_kws:
             try:
                 fts_query = " OR ".join(ascii_kws)
-                uid = user_ids[0]
-                extra = user_ids[1:] if len(user_ids) > 1 else None
-                fts_atoms = await self.atom_store.search_fts(
-                    query=fts_query, user_id=uid, k=k * 2, extra_user_ids=extra,
-                )
+                if user_ids:
+                    uid = user_ids[0]
+                    extra = user_ids[1:] if len(user_ids) > 1 else None
+                    fts_atoms = await self.atom_store.search_fts(
+                        query=fts_query, user_id=uid, k=k, extra_user_ids=extra,
+                    )
+                else:
+                    fts_atoms = await self.atom_store.search_fts(
+                        query=fts_query, user_id=None, k=k,
+                    )
                 for a in fts_atoms:
                     results[a.atom_id] = a
                     scores[a.atom_id] = a.importance
@@ -67,13 +72,26 @@ class BM25Retriever:
         if cjk_kws:
             try:
                 for kw in cjk_kws:
-                    for uid in user_ids:
+                    if user_ids:
+                        for uid in user_ids:
+                            rows = await self.atom_store.fetch(
+                                """SELECT * FROM memory_atoms
+                                   WHERE user_id=? AND status='active'
+                                     AND content LIKE ?
+                                   ORDER BY importance DESC LIMIT ?""",
+                                (uid, f"%{kw}%", k),
+                            )
+                            for r in rows:
+                                atom = self.atom_store._row_to_atom(r)
+                                results[atom.atom_id] = atom
+                                scores[atom.atom_id] = scores.get(atom.atom_id, 0.0) + 0.3
+                    else:
                         rows = await self.atom_store.fetch(
                             """SELECT * FROM memory_atoms
-                               WHERE user_id=? AND status='active'
+                               WHERE status='active'
                                  AND content LIKE ?
                                ORDER BY importance DESC LIMIT ?""",
-                            (uid, f"%{kw}%", k * 2),
+                            (f"%{kw}%", k),
                         )
                         for r in rows:
                             atom = self.atom_store._row_to_atom(r)

@@ -1845,84 +1845,132 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ----- Recall: Injection Preview ------------------------------- */
-.recall-injection-preview {
-  margin-top: var(--space-6);
+/* ----- Recall: 注入内容作为主结果 ----------------------------- */
+.recall-injected-section {
   background: var(--bg-card);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.recall-injected-header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.recall-injected-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.recall-injected-text {
+  margin: 0;
+  padding: var(--space-5);
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+/* ----- Recall: 折叠详情区 -------------------------------------- */
+.recall-detail-section {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-3);
   overflow: hidden;
   box-shadow: var(--shadow-xs);
 }
 
-.recall-preview-header {
+.recall-detail-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4) var(--space-5);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
   transition: background var(--transition-fast);
 }
 
-.recall-preview-header:hover {
+.recall-detail-header:hover {
   background: var(--bg-hover);
 }
 
-.recall-preview-toggle {
+.recall-detail-toggle {
   font-size: 12px;
   color: var(--text-tertiary);
   transition: transform var(--transition-fast);
+  width: 16px;
+  flex-shrink: 0;
 }
 
-.recall-preview-toggle.open {
+.recall-detail-toggle.open {
   transform: rotate(90deg);
 }
 
-.recall-preview-body {
+.recall-detail-body {
   border-top: 1px solid var(--border-light);
-  max-height: 400px;
-  overflow-y: auto;
+  padding: var(--space-3) var(--space-5) var(--space-5);
 }
 
-.recall-preview-body.hidden {
+.recall-detail-body.hidden {
   display: none;
 }
 
-.recall-injection-text {
-  margin: 0;
-  padding: var(--space-4) var(--space-5);
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: transparent;
+/* 原子卡（详情区内紧凑版） */
+.recall-detail-body .result-card {
+  margin-bottom: var(--space-2);
+  padding: var(--space-3) var(--space-4);
 }
 
-/* Recall page user select */
-#recall-user.input.select {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 13px;
-  border: 1px solid var(--border-normal);
+.recall-detail-body .result-card-header {
+  margin-bottom: var(--space-2);
+}
+
+.result-card-type {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--accent-light);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+}
+
+/* 日记溯源卡 */
+.recall-diary-card {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  cursor: pointer;
-  appearance: auto;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
-#recall-user.input.select:focus {
-  border-color: var(--border-focus);
-  outline: none;
+.recall-diary-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-1);
 }
+
+.recall-diary-content {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.6;
+}}
 
 /* ----- System Page --------------------------------------------- */
 .system-grid {

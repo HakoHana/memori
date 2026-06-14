@@ -14,12 +14,11 @@ class DiaryStore(BaseDbStore):
     # 默认 PRAGMA 够用，不需要额外设置
 
     async def initialize(self):
-        """创建 diary_entries 表"""
+        """创建 diary_entries 表（日记无用户归属）"""
         async with self._connect() as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS diary_entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
                     date TEXT NOT NULL,
                     content TEXT NOT NULL,
                     topics TEXT DEFAULT '[]',
@@ -31,10 +30,6 @@ class DiaryStore(BaseDbStore):
                     status TEXT DEFAULT 'active',
                     archived INTEGER DEFAULT 0
                 )
-            """)
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_diary_user_date
-                ON diary_entries(user_id, date)
             """)
             # FTS5 索引（自动同步 diary_entries.content）
             try:
@@ -53,40 +48,22 @@ class DiaryStore(BaseDbStore):
             # 列补齐已在 db_migration.py 中集中管理
             await db.commit()
 
-    async def search_fts(self, query: str, user_id: str, k: int = 5,
+    async def search_fts(self, query: str, k: int = 5,
                           imp_weight: float = 0.6, rank_weight: float = 0.4) -> list[dict]:
-        """在 diary_entries 上全文搜索
-
-        Args:
-            query: 搜索关键词
-            user_id: 用户 ID（空字符串则查所有）
-            k: 返回条数
-            imp_weight: 重要度权重
-            rank_weight: 匹配度权重
-        """
+        """在 diary_entries 上全文搜索（全库搜索，不按用户过滤）"""
         safe_query = self._sanitize_fts_query(query)
         if not safe_query:
             return []
 
         candidates = k * 3
-        if user_id:
-            rows = await self.fetch("""
-                SELECT d.id, d.date, d.content, d.importance, rank
-                FROM diary_fts
-                JOIN diary_entries d ON diary_fts.rowid = d.id
-                WHERE diary_fts MATCH ? AND d.user_id = ?
-                ORDER BY rank
-                LIMIT ?
-            """, (safe_query, user_id, candidates))
-        else:
-            rows = await self.fetch("""
-                SELECT d.id, d.date, d.content, d.importance, rank
-                FROM diary_fts
-                JOIN diary_entries d ON diary_fts.rowid = d.id
-                WHERE diary_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-            """, (safe_query, candidates))
+        rows = await self.fetch("""
+            SELECT d.id, d.date, d.content, d.importance, rank
+            FROM diary_fts
+            JOIN diary_entries d ON diary_fts.rowid = d.id
+            WHERE diary_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+        """, (safe_query, candidates))
 
         if not rows:
             return []
@@ -118,7 +95,7 @@ class DiaryStore(BaseDbStore):
         terms = cleaned.split()
         return ' AND '.join(f'"{t}"*' for t in terms if t)
 
-    async def append(self, user_id: str, date_str: str, content: str) -> int:
+    async def append(self, date_str: str, content: str) -> int:
         """写入一条日记 — 每条独立插入，不按日期去重
 
         Returns:
@@ -128,9 +105,9 @@ class DiaryStore(BaseDbStore):
         async with self._connect() as db:
             cursor = await db.execute("""
                 INSERT INTO diary_entries
-                (user_id, date, content, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, date_str, content.strip(), now, now))
+                (date, content, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (date_str, content.strip(), now, now))
             entry_id = cursor.lastrowid
             await db.commit()
             # 增量同步 FTS（只索引新条目，不再全量 rebuild）
@@ -144,21 +121,21 @@ class DiaryStore(BaseDbStore):
                 pass
             return entry_id
 
-    async def read(self, user_id: str, date_str: str) -> str | None:
+    async def read(self, date_str: str) -> str | None:
         """读取某天最新一条日记"""
         rows = await self.fetch(
-            "SELECT content FROM diary_entries WHERE user_id = ? AND date = ? ORDER BY id DESC LIMIT 1",
-            (user_id, date_str),
+            "SELECT content FROM diary_entries WHERE date = ? ORDER BY id DESC LIMIT 1",
+            (date_str,),
         )
         return rows[0][0] if rows else None
 
-    async def read_all(self, user_id: str, date_str: str) -> list[dict]:
+    async def read_all(self, date_str: str) -> list[dict]:
         """读取某天所有日记条目（按时间正序）"""
         rows = await self.fetch("""
             SELECT id, content, topics, sentiment, importance, created_at
-            FROM diary_entries WHERE user_id = ? AND date = ?
+            FROM diary_entries WHERE date = ?
             ORDER BY id ASC
-        """, (user_id, date_str))
+        """, (date_str,))
         return [
             {
                 "id": r[0], "content": r[1], "topics": r[2],
@@ -168,54 +145,46 @@ class DiaryStore(BaseDbStore):
             for r in rows
         ]
 
-    async def list_months(self, user_id: str) -> list[dict[str, str]]:
+    async def list_months(self) -> list[dict[str, str]]:
         """列出所有有日记的年月"""
         async with self._connect() as db:
             rows = await db.execute_fetchall("""
                 SELECT DISTINCT substr(date, 1, 4) as year, substr(date, 6, 2) as month
-                FROM diary_entries WHERE user_id = ?
+                FROM diary_entries
                 ORDER BY year DESC, month DESC
-            """, (user_id,))
+            """)
         return [{"year": r[0], "month": r[1]} for r in rows]
 
-    async def list_dates(self, user_id: str, year: str, month: str) -> list[dict]:
+    async def list_dates(self, year: str, month: str) -> list[dict]:
         """列出某个月份所有日记日期"""
         prefix = f"{year}-{month}"
         async with self._connect() as db:
             rows = await db.execute_fetchall("""
                 SELECT date FROM diary_entries
-                WHERE user_id = ? AND date LIKE ?
+                WHERE date LIKE ?
                 ORDER BY date DESC
-            """, (user_id, f"{prefix}%"))
+            """, (f"{prefix}%",))
         return [{"date": r[0]} for r in rows]
 
-    async def delete_date(self, user_id: str, date_str: str) -> bool:
+    async def delete_date(self, date_str: str) -> bool:
         """删除某天的日记"""
         async with self._connect() as db:
             cursor = await db.execute(
-                "DELETE FROM diary_entries WHERE user_id = ? AND date = ?",
-                (user_id, date_str),
+                "DELETE FROM diary_entries WHERE date = ?",
+                (date_str,),
             )
             await db.commit()
             return cursor.rowcount > 0
 
-    async def get_all_user_ids(self) -> list[str]:
-        """获取所有有日记的用户 ID"""
-        async with self._connect() as db:
-            rows = await db.execute_fetchall(
-                "SELECT DISTINCT user_id FROM diary_entries"
-            )
-        return [r[0] for r in rows]
-
-    async def upsert(self, user_id: str, date_str: str, content: str) -> int:
+    async def upsert(self, date_str: str, content: str) -> int:
         """追加一篇日记（一天多份，不覆盖已有）
 
         Returns:
             新日记的 ID
         """
-        return await self.append(user_id, date_str, content)
+        return await self.append(date_str, content)
 
-    async def update_metadata(self, user_id: str, date_str: str, **kwargs):
+    async def update_metadata(self, date_str: str, **kwargs):
         """更新某天最新一条日记的元数据
 
         一天多份日记时精确匹配最新条目，不会误改历史条目。
@@ -229,8 +198,8 @@ class DiaryStore(BaseDbStore):
         if not sets:
             return
         row = await self.fetchone(
-            "SELECT id FROM diary_entries WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
-            (user_id, date_str),
+            "SELECT id FROM diary_entries WHERE date=? ORDER BY id DESC LIMIT 1",
+            (date_str,),
         )
         if not row:
             return
@@ -256,39 +225,24 @@ class DiaryStore(BaseDbStore):
             vals,
         )
 
-    # ── 通用查询（替代 routes.py 中的裸 SQL） ────────────
+    # ── 通用查询 ────────────
 
     async def list_paginated(
-        self, uid: str | None = None, page: int = 1, size: int = 20
+        self, page: int = 1, size: int = 20
     ) -> tuple[list[dict], int]:
-        """分页日记列表
-
-        Returns:
-            (items, total_count)
-        """
+        """分页日记列表（全库，不按用户过滤）"""
         offset = (page - 1) * size
-        columns = ("id", "user_id", "date", "content", "importance", "sentiment", "topics", "created_at")
-
-        if uid:
-            rows = await self.fetch(
-                f"SELECT {', '.join(columns)} FROM diary_entries "
-                "WHERE user_id=? ORDER BY date DESC LIMIT ? OFFSET ?",
-                (uid, size, offset),
-            )
-            total = (await self.fetchone(
-                "SELECT COUNT(*) FROM diary_entries WHERE user_id=?", (uid,)
-            ))[0]
-        else:
-            rows = await self.fetch(
-                f"SELECT {', '.join(columns)} FROM diary_entries "
-                "ORDER BY date DESC LIMIT ? OFFSET ?",
-                (size, offset),
-            )
-            total = (await self.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
+        columns = ("id", "date", "content", "importance", "sentiment", "topics", "created_at")
+        rows = await self.fetch(
+            f"SELECT {', '.join(columns)} FROM diary_entries "
+            "ORDER BY date DESC LIMIT ? OFFSET ?",
+            (size, offset),
+        )
+        total = (await self.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
 
         items = []
         for r in rows:
-            topics_raw = r[6]
+            topics_raw = r[5]
             topics = []
             if topics_raw:
                 try:
@@ -297,9 +251,9 @@ class DiaryStore(BaseDbStore):
                 except Exception:
                     topics = [str(topics_raw)]
             items.append({
-                "id": r[0], "user_id": r[1], "date": r[2], "content": r[3],
-                "importance": r[4], "sentiment": r[5], "topics": topics,
-                "created_at": r[7],
+                "id": r[0], "date": r[1], "content": r[2],
+                "importance": r[3], "sentiment": r[4], "topics": topics,
+                "created_at": r[6],
             })
         return items, total
 
@@ -314,40 +268,31 @@ class DiaryStore(BaseDbStore):
         col_rows = await self.fetch("PRAGMA table_info(diary_entries)")
         columns = [r[1] for r in col_rows] if col_rows else []
         if not columns:
-            # fallback 硬编码
-            columns = ["id", "user_id", "date", "content", "topics", "sentiment",
+            columns = ["id", "date", "content", "topics", "sentiment",
                        "importance", "atom_count", "created_at", "updated_at",
                        "status", "archived"]
         return dict(zip(columns, row))
 
-    async def count(self, uid: str | None = None) -> int:
-        """日记条目计数"""
-        if uid:
-            row = await self.fetchone(
-                "SELECT COUNT(*) FROM diary_entries WHERE user_id=?", (uid,)
-            )
-        else:
-            row = await self.fetchone("SELECT COUNT(*) FROM diary_entries")
+    async def count(self) -> int:
+        """日记条目计数（全库）"""
+        row = await self.fetchone("SELECT COUNT(*) FROM diary_entries")
         return row[0] if row else 0
 
-    async def get_timeline_dates(self, uid: str, year: str = "", month: str = "") -> list[str]:
-        """获取时间线日期列表"""
-        if not uid:
-            return []
+    async def get_timeline_dates(self, year: str = "", month: str = "") -> list[str]:
+        """获取时间线日期列表（全库，不按用户过滤）"""
         if year and month:
             ym = f"{year}-{int(month):02d}"
             rows = await self.fetch(
-                "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
-                (uid, f"{ym}%"),
+                "SELECT DISTINCT date FROM diary_entries WHERE date LIKE ? ORDER BY date DESC",
+                (f"{ym}%",),
             )
         elif year:
             rows = await self.fetch(
-                "SELECT DISTINCT date FROM diary_entries WHERE user_id=? AND date LIKE ? ORDER BY date DESC",
-                (uid, f"{year}%"),
+                "SELECT DISTINCT date FROM diary_entries WHERE date LIKE ? ORDER BY date DESC",
+                (f"{year}%",),
             )
         else:
             rows = await self.fetch(
-                "SELECT DISTINCT date FROM diary_entries WHERE user_id=? ORDER BY date DESC LIMIT 100",
-                (uid,),
+                "SELECT DISTINCT date FROM diary_entries ORDER BY date DESC LIMIT 100"
             )
         return [r[0] for r in rows]

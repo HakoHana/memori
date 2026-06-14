@@ -31,8 +31,8 @@ CURRENT_VERSION = 6
 # ── 每类数据库的 schema 版本（默认 0 表示由 Store.initialize() 统一建表） ──
 VERSIONS: dict[str, int] = {
     "memory": 3,         # v1→v3：memory_atoms 列补齐 + 索引；v2 已迁至 conversations.db
-    "diaries": 0,        # 由 DiaryStore.initialize() 统一建表
-    "conversations": 0,  # 由 ConversationStore.initialize() 统一建表
+    "diaries": 1,        # v1：删除 diary_entries.user_id 列
+    "conversations": 1,  # v1：messages.sender_id 从 raw QQ → canonical uid
     "graph": 1,          # v1：ISO 字符串 → epoch float 统一
     "state": 0,          # 由 StateStore.initialize() 统一建表
 }
@@ -62,6 +62,18 @@ MIGRATION_MANIFEST: dict[int, dict[str, Any]] = {
         "type": "schema",
         "requires_backup": False,
         "tables_affected": ["user_persona"],
+    },
+    7: {
+        "description": "diaries: 删除 diary_entries.user_id 列（日记无归属）",
+        "type": "schema",
+        "requires_backup": False,
+        "tables_affected": ["diary_entries"],
+    },
+    8: {
+        "description": "conversations: messages.sender_id raw QQ → canonical uid",
+        "type": "data",
+        "requires_backup": False,
+        "tables_affected": ["messages"],
     },
 }
 
@@ -244,7 +256,7 @@ class DBMigration(BaseDbStore):
             },
             "diaries": {
                 "diary_entries": [
-                    "id", "user_id", "date", "content", "topics", "sentiment",
+                    "id", "date", "content", "topics", "sentiment",
                     "importance", "atom_count", "created_at", "updated_at", "status",
                 ],
             },
@@ -469,6 +481,72 @@ class DBMigration(BaseDbStore):
                 pass
             await db.commit()
         logger.info("[Migration] v6 完成: persona_embedding 列已就绪")
+
+    async def _migrate_diaries_v1(self):
+        """v1: 删除 diary_entries.user_id 列（日记无归属）"""
+        async with self._connect() as db:
+            try:
+                await db.execute("DROP INDEX IF EXISTS idx_diary_user_date")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE diary_entries DROP COLUMN user_id")
+            except Exception as e:
+                logger.warning(f"[Migration] 删除 user_id 列失败: {e}")
+            await db.commit()
+        logger.info("[Migration] diaries v1 完成: 已删除 diary_entries.user_id")
+
+    async def _migrate_conversations_v1(self):
+        """v1: messages.sender_id 从 raw QQ 转为 canonical uid
+
+        从同目录下的 memory.db 读取 user_identities 映射表，
+        将 conversations.db 中 messages.sender_id 的原始 QQ 号替换为 canonical uid。
+        """
+        import aiosqlite
+        from pathlib import Path
+
+        # 定位同目录的 memory.db
+        memory_db = str(Path(self.db_path).parent / "memory.db")
+        if not Path(memory_db).exists():
+            logger.info("[Migration] memory.db 不存在，跳过 sender_id 迁移")
+            return
+
+        # 1. 读取身份映射
+        mapping: dict[str, str] = {}
+        try:
+            async with aiosqlite.connect(memory_db) as mem:
+                rows = await mem.execute_fetchall(
+                    "SELECT platform_id, uid FROM user_identities"
+                )
+                for pid, cuid in rows:
+                    if pid.startswith("qq:"):
+                        mapping[pid[3:]] = cuid  # "qq:123456" → "123456" → "u_xxx"
+        except Exception as e:
+            logger.warning(f"[Migration] 读取 user_identities 失败: {e}")
+            return
+
+        if not mapping:
+            logger.info("[Migration] 无身份映射数据，跳过")
+            return
+
+        # 2. 逐条迁移 conversations.db 中的 sender_id
+        updated = 0
+        for raw_qq, cuid in mapping.items():
+            try:
+                cur = await self.execute(
+                    "UPDATE messages SET sender_id=? WHERE sender_id=?",
+                    (cuid, raw_qq),
+                )
+                updated += cur.rowcount or 0
+            except Exception:
+                pass
+
+        if updated:
+            logger.info(f"[Migration] conversations v1 完成: 已迁移 {updated} 条消息 sender_id")
+        else:
+            logger.info("[Migration] conversations v1 完成: 无需要迁移的消息")
+
+    async def _migrate_graph_v1(self):
         """v1: 图谱时间戳从 ISO 8601 字符串统一为 epoch float"""
         from datetime import datetime
 

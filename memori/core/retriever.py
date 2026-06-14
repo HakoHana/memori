@@ -28,7 +28,7 @@ class Retriever(IRetriever):
     - Graph 图路：entity → graph_edges → diary → fact
 
     热缓存：
-    - get_recent_context() 优先从 HotMessageCache 读取
+    - get_recent_context() 从 ConversationStore 读取
     - 未命中时回退到 ConversationStore 查库
     """
 
@@ -38,7 +38,6 @@ class Retriever(IRetriever):
         persona_store: PersonaStore,
         diary_store: DiaryStore | None = None,
         config: dict[str, Any] | None = None,
-        hot_cache=None,
         conversation_store=None,
         graph_store: GraphStore | None = None,
         embed_provider: EmbeddingProvider | None = None,
@@ -47,7 +46,6 @@ class Retriever(IRetriever):
         self.persona_store = persona_store
         self.diary_store = diary_store
         self.config = config or {}
-        self.hot_cache = hot_cache
         self.conversation_store = conversation_store
         self.recall_count = self.config.get("recall_count", 5)
         self.recall_max_tokens = self.config.get("recall_max_tokens", 500)
@@ -369,26 +367,11 @@ class Retriever(IRetriever):
     async def get_recent_context(
         self, user_id: str, session_id: str = "", limit: int = 20, bot_name: str = "我"
     ) -> str:
-        """获取最近对话上下文 — 优先从热缓存读取
-
-        热缓存命中 → 直接返回格式化文本（零 I/O）
-        热缓存未命中 / 条数不足 → 回退查 ConversationStore
-        """
-        # 1) 优先从内存缓存读
-        if self.hot_cache:
-            cached = self.hot_cache.format_recent_context(user_id, limit, bot_name)
-            if cached:
-                logger.debug(f"[Cache] HOT HIT user={user_id} lines={len(cached.split(chr(10)))}")
-                return cached
-            logger.debug(f"[Cache] HOT MISS user={user_id}")
-
-        # 2) 回退查库
+        """获取最近对话上下文 — 从 ConversationStore 读取"""
         if self.conversation_store and session_id:
-            logger.debug(f"[Cache] DB FALLBACK user={user_id}")
             return await self.conversation_store.get_recent_context(
                 session_id, limit, bot_name
             )
-
         return ""
 
     async def search_diaries(self, user_id: str, query: str, k: int = 5) -> list[dict]:

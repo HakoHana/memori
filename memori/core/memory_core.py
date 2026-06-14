@@ -27,7 +27,7 @@ from .adapters import LLMProvider, ContextProvider, EmbeddingProvider
 from .interfaces import (
     ICapturer, IRetriever, IPersonaEngine, IGraphEngine,
     IWarmProcessor, IConsolidationManager, ICommandHandler,
-    IMemoryInjector, IHotMessageCache,
+    IMemoryInjector,
 )
 
 # 具体实现（供工厂实例化用）
@@ -35,7 +35,6 @@ from ..pipeline.capturer import Capturer
 from ..pipeline.memory_uow import MemoryUnitOfWork
 from ..features.persona_engine import PersonaEngine
 from .retriever import Retriever
-from .hot_cache import HotMessageCache
 from ..pipeline.warm_processor import WarmProcessor
 from .memory_injector import MemoryInjector
 from ..pipeline.consolidation_manager import ConsolidationManager
@@ -134,7 +133,6 @@ class MemoryCore:
         self.conversation_store: ConversationStore | None = None
         self.write_op_log: WriteOpLog | None = None
         self.page_api = None
-        self.hot_cache: IHotMessageCache = HotMessageCache(str(self.data_dir), config=self.config)
         self._background_tasks: set[asyncio.Task] = set()
 
     async def initialize(self):
@@ -215,14 +213,6 @@ class MemoryCore:
 
     async def _phase4_data_recovery(self):
         """Phase 4: 数据恢复 + 旧数据迁移"""
-        # WAL 恢复
-        try:
-            restored = self.hot_cache.restore_from_wal()
-            if restored:
-                logger.info(f"[Memoria] HotCache WAL 恢复: {restored} 条消息")
-        except Exception as e:
-            logger.warning(f"[Memoria] HotCache WAL 恢复失败: {e}")
-
         # 写操作日志修复
         try:
             await self.write_op_log.repair_on_startup()
@@ -327,7 +317,6 @@ class MemoryCore:
             persona_store=self.persona_store,
             diary_store=self.diary_store,
             config=self.config,
-            hot_cache=self.hot_cache,
             conversation_store=self.conversation_store,
             graph_store=self.graph_store,
             embed_provider=self.embed_provider,
@@ -347,8 +336,8 @@ class MemoryCore:
 
         # 定时循环（各自独立 try，一个失败不影响其他）
         loops = [
+            ("cleanup", self._cleanup_loop()),
             ("co_occur", self._cooccur_loop()),
-            ("hotcache_flush", self._hotcache_flush_loop()),
         ]
         if self.lifecycle:
             loops.append(("lifecycle", self._lifecycle_loops()))
@@ -365,7 +354,6 @@ class MemoryCore:
         """Phase 8: 调度器 + 指令处理器"""
         self.consolidation_manager = ConsolidationManager(
             state_store=self.state_store,
-            hot_cache=self.hot_cache,
             warm_processor=self.warm_processor,
             conversation_store=self.conversation_store,
             config=self.config,
@@ -543,28 +531,21 @@ class MemoryCore:
 
         logger.info("[Memoria] 旧数据迁移完成")
 
-    async def _hotcache_flush_loop(self):
-        """定时将 HotCache → conversations.db
-
-        每 60 秒检查一次，有未刷写消息则写入 + 滑动窗口。
-        关闭前 destroy() 会再做一次最终刷写。
-        """
+    async def _cleanup_loop(self):
+        """定时清理：对话滑动窗口"""
         while not self._initialized:
             await asyncio.sleep(5)
         while True:
             try:
-                await asyncio.sleep(60)
-                if self.hot_cache and self.conversation_store:
-                    flushed = await self.hot_cache.flush_to_db(self.conversation_store)
-                    if flushed:
-                        logger.info(f"[Memoria] HotCache → DB: {flushed} 条")
-                deleted = await self.conversation_store.enforce_retention()
-                if deleted:
-                    logger.info(f"[Memoria] 对话滑动窗口清理: {deleted} 条")
+                await asyncio.sleep(120)
+                if self.conversation_store:
+                    deleted = await self.conversation_store.enforce_retention()
+                    if deleted:
+                        logger.info(f"[Memoria] 对话滑动窗口清理: {deleted} 条")
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Memoria] HotCache 刷写异常: {e}")
+                logger.warning(f"[Memoria] 清理异常: {e}")
 
     async def _cooccur_loop(self):
         while not self._initialized:
@@ -664,15 +645,6 @@ class MemoryCore:
             return None
         if not user_id or not message_text:
             return None
-
-        # 写入热缓存
-        self.hot_cache.push(
-            user_id=user_id,
-            role="user",
-            content=message_text,
-            sender_name=sender_name,
-            sender_id=user_id,
-        )
 
         # 指令
         if message_text.startswith("/"):
@@ -856,20 +828,8 @@ class MemoryCore:
             logger.warning(f"[Memoria] 指令处理失败 {cmd}: {e}")
 
     async def destroy(self):
-        """优雅关闭 — 先刷写热缓存，再停后台任务"""
-        # 1) 优先刷写热缓存（防止进程关闭时丢失对话）
-        if self.hot_cache and self.conversation_store:
-            try:
-                flushed = await self.hot_cache.flush_to_db(self.conversation_store)
-                if flushed:
-                    logger.info(f"[Memoria] HotCache 关闭刷写: {flushed} 条")
-                deleted = await self.conversation_store.enforce_retention()
-                if deleted:
-                    logger.info(f"[Memoria] 关闭前滑动窗口清理: {deleted} 条")
-            except Exception as e:
-                logger.warning(f"[Memoria] 关闭刷写异常: {e}")
-
-        # 2) 停后台任务
+        """优雅关闭 — 停后台任务"""
+        # 1) 停后台任务
         if self.warm_processor:
             await self.warm_processor.stop()
         if self.consolidation_manager:
@@ -929,8 +889,6 @@ class MemoryCore:
         self.config.update(config)
         if self.injector:
             self.injector.reload_config(self.config)
-        if self.hot_cache:
-            self.hot_cache.update_config(config)
         if self.consolidation_manager:
             self.consolidation_manager.update_config(config)
         # 切换 LLM 模型

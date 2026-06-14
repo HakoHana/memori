@@ -19,7 +19,6 @@ from .core.memory_core import MemoryCore
 from .core.adapters import LLMProvider, ContextProvider, MemoryStore
 from .models.memory_atom import MemoryAtom, AtomType, AtomStatus, RecallResult
 from .core.retriever import Retriever
-from .core.hot_cache import HotMessageCache
 from .core.memory_injector import MemoryInjector
 
 from .lifecycle import LifecycleManager
@@ -32,7 +31,7 @@ __all__ = [
     # 数据模型
     "MemoryAtom", "AtomType", "AtomStatus", "RecallResult",
     # 子模块
-    "Retriever", "HotMessageCache", "MemoryInjector",
+    "Retriever", "MemoryInjector",
     # 生命周期管理
     "LifecycleManager",
 ]

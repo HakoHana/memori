@@ -168,15 +168,7 @@ class TestRetriever:
         assert "atoms" in result
         assert "diaries" in result
 
-    async def test_get_recent_context_from_cache(self, retriever):
-        retriever.hot_cache = MagicMock()
-        retriever.hot_cache.format_recent_context = MagicMock(return_value="缓存内容")
-        result = await retriever.get_recent_context("user1")
-        assert result == "缓存内容"
-
-    async def test_get_recent_context_db_fallback(self, retriever):
-        retriever.hot_cache = MagicMock()
-        retriever.hot_cache.format_recent_context = MagicMock(return_value="")
+    async def test_get_recent_context(self, retriever):
         retriever.conversation_store = MagicMock()
         retriever.conversation_store.get_recent_context = AsyncMock(return_value="历史内容")
         result = await retriever.get_recent_context("user1", session_id="s1")

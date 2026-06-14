@@ -299,64 +299,6 @@ class IConsolidationManager(ABC):
 
 
 # ═══════════════════════════════════════════════════════════
-#  热消息缓存
-# ═══════════════════════════════════════════════════════════
-
-class IHotMessageCache(ABC):
-    """热消息缓存接口"""
-
-    @abstractmethod
-    def push(
-        self,
-        user_id: str,
-        role: str,
-        content: str,
-        sender_name: str = "",
-        sender_id: str = "",
-        session_id: str = "",
-    ):
-        """追加一条消息到用户热缓存"""
-        ...
-
-    @abstractmethod
-    def get_recent(self, user_id: str, limit: int = 20) -> list[dict]:
-        """取最近 N 条原始消息"""
-        ...
-
-    @abstractmethod
-    def format_recent_context(
-        self, user_id: str, limit: int = 20, bot_name: str = "我"
-    ) -> str:
-        """格式化为带时间戳的对话文本"""
-        ...
-
-    @abstractmethod
-    def restore_from_wal(self) -> int:
-        """从 WAL 文件恢复热缓存（启动时调用）"""
-        ...
-
-    @abstractmethod
-    def clear(self, user_id: str | None = None):
-        """清空缓存"""
-        ...
-
-    @abstractmethod
-    async def flush_to_db(self, conversation_store) -> int:
-        """将未刷写的消息批量持久化到 conversations.db"""
-        ...
-
-    @abstractmethod
-    def update_config(self, config: dict):
-        """热更新缓存配置（max_per_user）"""
-        ...
-
-    @abstractmethod
-    def stats(self) -> dict[str, int]:
-        """返回每用户的消息数"""
-        ...
-
-
-# ═══════════════════════════════════════════════════════════
 #  用户身份解析器
 # ═══════════════════════════════════════════════════════════
 

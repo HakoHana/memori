@@ -288,19 +288,7 @@ class MemoriPlugin(Star):
             if not uid or not txt or txt.startswith("/"):
                 return
 
-            # 1. 推入热缓存（纯缓冲区，供召回快速读取）
-            hc = self.core.hot_cache
-            if hc:
-                try:
-                    sid = await self.core.conversation_store.get_session_id(event)
-                    hc.push(
-                        user_id=uid, role="user", content=txt,
-                        sender_name=sender_name, session_id=sid,
-                    )
-                except Exception:
-                    pass
-
-            # 2. 写入 conversations.db（持久化）
+            # 1. 写入 conversations.db（持久化）
             if self.core.conversation_store:
                 try:
                     await self.core.conversation_store.add_message(
@@ -328,20 +316,12 @@ class MemoriPlugin(Star):
         if not self.core:
             return
         try:
-            hc = self.core.hot_cache
-            if hc and response:
-                sid = await self.core.conversation_store.get_session_id(event)
+            if response:
                 uid = AstrBotCtx().get_user_id(event)
                 resp_text = ""
                 if hasattr(response, "result_chain") and response.result_chain:
                     resp_text = response.result_chain.get_plain_text() or ""
                 if resp_text:
-                    bot_name = self.config.get("bot_name", "Hana")
-                    hc.push(
-                        user_id=uid, role="assistant", content=resp_text,
-                        sender_name=bot_name, session_id=sid,
-                    )
-
                     # 写入 conversations.db
                     if self.core.conversation_store:
                         try:

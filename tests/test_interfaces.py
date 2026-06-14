@@ -22,7 +22,6 @@ from memori.core.interfaces import (
     IMemoryInjector,
     IWarmProcessor,
     IConsolidationManager,
-    IHotMessageCache,
     IUserIdentityResolver,
 )
 
@@ -40,7 +39,6 @@ _ALL_INTERFACES = [
     IMemoryInjector,
     IWarmProcessor,
     IConsolidationManager,
-    IHotMessageCache,
     IUserIdentityResolver,
 ]
 
@@ -79,7 +77,6 @@ _IMPLEMENTATIONS: dict = {
     IMemoryInjector: ("memori.core.memory_injector", "MemoryInjector"),
     IConsolidationManager: ("memori.pipeline.consolidation_manager", "ConsolidationManager"),
     IWarmProcessor: ("memori.pipeline.warm_processor", "WarmProcessor"),
-    IHotMessageCache: ("memori.core.hot_cache", "HotMessageCache"),
 }
 
 

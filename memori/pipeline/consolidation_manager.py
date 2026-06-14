@@ -18,7 +18,7 @@ from ..core.logger import logger
 
 from ..models.memory_atom import PersistedSessionState
 from ..storage.state_store import StateStore
-from ..core.interfaces import IConsolidationManager, IWarmProcessor, IHotMessageCache
+from ..core.interfaces import IConsolidationManager, IWarmProcessor
 
 
 class ConsolidationManager(IConsolidationManager):
@@ -37,13 +37,11 @@ class ConsolidationManager(IConsolidationManager):
     def __init__(
         self,
         state_store: StateStore,
-        hot_cache: IHotMessageCache | None = None,
         warm_processor=None,
         conversation_store=None,
         config: dict[str, Any] | None = None,
     ):
         self.state_store = state_store
-        self.hot_cache = hot_cache
         self.warm_processor = warm_processor
         self.conversation_store = conversation_store
         self.config = config or {}
@@ -324,16 +322,10 @@ class ConsolidationManager(IConsolidationManager):
     def set_warm_processor(self, warm_processor: IWarmProcessor):
         self.warm_processor = warm_processor
 
-    def set_hot_cache(self, hot_cache: IHotMessageCache):
-        self.hot_cache = hot_cache
-
     # ── 辅助 ──
 
     async def _get_conversation_context(self, user_id: str) -> str:
-        """获取用户自上次整理后的新对话上下文（滑窗）
-
-        优先从 conversations.db 拉取，降级到热缓存。
-        """
+        """获取用户自上次整理后的新对话上下文（滑窗）"""
         sid = self._last_session_id.get(user_id, "")
         if sid and self.conversation_store:
             try:
@@ -346,22 +338,7 @@ class ConsolidationManager(IConsolidationManager):
                     return text
             except Exception:
                 pass
-        # 降级：热缓存
-        if self.hot_cache:
-            try:
-                return self.hot_cache.format_recent_context(user_id, limit=10)
-            except Exception:
-                pass
         return ""
-
-    def _get_hot_context(self, user_id: str) -> str:
-        """仅热缓存兜底（旧内部接口保留）"""
-        if not self.hot_cache:
-            return ""
-        try:
-            return self.hot_cache.format_recent_context(user_id, limit=10)
-        except Exception:
-            return ""
 
     def update_config(self, config: dict[str, Any]):
         """热更新配置"""

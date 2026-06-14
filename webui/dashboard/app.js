@@ -1288,15 +1288,17 @@
     var query = document.getElementById("recall-query").value.trim();
     if (!query) return showToast("请输入查询内容", true);
     var k = parseInt(document.getElementById("recall-k").value) || 5;
+    var uid = document.getElementById("recall-user").value;
+    if (!uid) return showToast("请先选择一个目标用户", true);
     var btn = document.getElementById("recall-search-btn");
     btn.disabled = true;
 
     try {
       var params = new URLSearchParams();
       params.set("q", query);
-      params.set("size", String(k));
-      var data = unwrapApiData(await apiRequest("memories?" + params.toString())) || {};
-      data.elapsed = "";
+      params.set("uid", uid);
+      params.set("k", String(k));
+      var data = unwrapApiData(await apiRequest("recall-test?" + params.toString())) || {};
       renderRecallResults(data);
     } catch (e) {
       showToast(e.message || "搜索失败", true);
@@ -1310,18 +1312,19 @@
     var stats = document.getElementById("recall-stats");
     var container = document.getElementById("recall-results");
     var total = data.total || 0;
-    var time = data.elapsed_time_ms != null ? data.elapsed_time_ms.toFixed(1) + "ms" : "";
 
     if (total) {
       stats.classList.remove("hidden");
-      document.getElementById("recall-count-text").textContent = window.t("recall.resultsCount", total);
-      document.getElementById("recall-time-text").textContent = time;
+      document.getElementById("recall-count-text").textContent = "共 " + total + " 条结果";
+      var timeEl = document.getElementById("recall-time-text");
+      if (timeEl) timeEl.textContent = "";
     } else {
       stats.classList.add("hidden");
     }
 
     if (!total) {
       container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary)">' + window.t("recall.noMatch") + '</div>';
+      document.getElementById("recall-injection-preview").classList.add("hidden");
       return;
     }
 
@@ -1360,11 +1363,33 @@
         if (item) {
           renderPeekMemory(item);
         } else {
-          // 记忆不在当前列表中时，仍然可以打开详情（API 会拉取完整数据）
           renderPeekMemory({ memory_id: mid });
         }
       });
     });
+
+    // 注入 LLM 的内容预览
+    var previewEl = document.getElementById("recall-injection-preview");
+    var textEl = document.getElementById("recall-injection-text");
+    if (previewEl && textEl) {
+      if (data.injected_text) {
+        previewEl.classList.remove("hidden");
+        textEl.textContent = data.injected_text;
+        // 默认收起
+        document.getElementById("recall-preview-body").classList.add("hidden");
+        document.getElementById("recall-preview-toggle").classList.remove("open");
+      } else {
+        previewEl.classList.add("hidden");
+      }
+    }
+  }
+
+  function toggleInjectionPreview() {
+    var body = document.getElementById("recall-preview-body");
+    var toggle = document.getElementById("recall-preview-toggle");
+    if (!body || !toggle) return;
+    body.classList.toggle("hidden");
+    toggle.classList.toggle("open");
   }
 
   function initRecallPage() {
@@ -1375,6 +1400,23 @@
     document.getElementById("recall-k").addEventListener("input", function() {
       document.getElementById("recall-k-value").textContent = this.value;
     });
+
+    // 加载用户列表到下拉框
+    loadRecallUsers();
+  }
+
+  async function loadRecallUsers() {
+    try {
+      var data = unwrapApiData(await apiRequest("users")) || {};
+      var users = data.users || [];
+      var sel = document.getElementById("recall-user");
+      if (!sel) return;
+      sel.innerHTML = users.map(function(u) {
+        return '<option value="' + esc(u.uid) + '">' + esc(u.name || u.uid) + '</option>';
+      }).join("");
+    } catch (e) {
+      console.warn("加载用户列表失败", e);
+    }
   }
 
   /* ================================================================

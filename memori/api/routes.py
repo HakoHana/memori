@@ -74,6 +74,51 @@ async def list_memories(
     return {"ok": True, "items": items, "total": total}
 
 
+@router.get("/v1/recall-test")
+async def recall_test(
+    q: str = Query(..., description="搜索关键词"),
+    uid: str = Query(..., description="用户 ID"),
+    k: int = Query(5, ge=1, le=50, description="召回条数"),
+    core: MemoryCore = Depends(get_core),
+):
+    """召回测试：执行完整召回流水线并返回注入文本预览"""
+    if not q or not uid:
+        return {"ok": False, "error": "需要 q 和 uid 参数"}
+
+    recall = await core.retriever.get_context_memories(uid, q, k)
+
+    # 注入预览 — 模拟注入效果
+    injected_text = ""
+    if recall.memory_text or recall.persona_text:
+        combined = ""
+        if recall.persona_text:
+            combined += f"关于你：\n{recall.persona_text[:300]}\n\n"
+        if recall.memory_text:
+            combined += recall.memory_text
+        injected_text = core.injector.format_memory_block(combined, uid)
+
+    results = []
+    for a in recall.atoms:
+        results.append({
+            "memory_id": a.atom_id,
+            "content": a.content,
+            "type": a.atom_type.value,
+            "importance": a.importance,
+            "date": a.diary_date,
+            "score_percentage": max(0, min(100, (a.importance or 0.5) * 100)),
+        })
+
+    return {
+        "ok": True,
+        "results": results,
+        "total": len(results),
+        "memory_text": recall.memory_text or "",
+        "persona_text": recall.persona_text or "",
+        "injected_text": injected_text or "",
+        "diary_refs": recall.diary_refs or [],
+    }
+
+
 @router.get("/v1/memories/timeline")
 async def get_timeline(
     uid: str = Query(..., description="用户 ID"),

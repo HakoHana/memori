@@ -181,19 +181,33 @@
               <textarea id="recall-query" class="input textarea" rows="3" placeholder="输入查询语句测试记忆检索..."></textarea>
               <div class="recall-form-row">
                 <div class="recall-form-field" style="max-width:200px">
-                  <label class="recall-form-label">结果数 (k)</label>
+                  <label class="recall-form-label" data-i18n="recall.k">结果数 (k)</label>
                   <div class="slider-group">
                     <input type="range" id="recall-k" min="1" max="50" value="5" />
                     <span class="slider-value" id="recall-k-value">5</span>
                   </div>
+                </div>
+                <div class="recall-form-field" style="max-width:200px">
+                  <label class="recall-form-label" data-i18n="recall.user">目标用户</label>
+                  <select id="recall-user" class="input select"></select>
                 </div>
                 <button class="btn btn-primary" id="recall-search-btn">执行召回</button>
               </div>
             </div>
             <div class="recall-results-header hidden" id="recall-stats">
               <span id="recall-count-text">0 条结果</span>
+              <span id="recall-time-text"></span>
             </div>
             <div id="recall-results"></div>
+            <div id="recall-injection-preview" class="recall-injection-preview hidden">
+              <div class="recall-preview-header" onclick="toggleInjectionPreview()">
+                <span data-i18n="recall.injectionPreview">📋 注入 LLM 的内容</span>
+                <span class="recall-preview-toggle" id="recall-preview-toggle">▸</span>
+              </div>
+              <div class="recall-preview-body hidden" id="recall-preview-body">
+                <pre id="recall-injection-text" class="recall-injection-text"></pre>
+              </div>
+            </div>
           </div>
         </section>
         <!-- Page: System -->

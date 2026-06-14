@@ -269,17 +269,9 @@ class MemoryCore:
             write_op_log=self.write_op_log,
         )
 
-        # 嵌入模型：优先用外部传入，否则如果配置了 embed_provider_id 则自动创建本地模型
+        # 嵌入模型：优先用外部传入，否则根据配置自动创建
         if self.embed_provider is None and self.config.get("embed_provider_id"):
-            try:
-                from ..core.embed_providers import LocalEmbeddingProvider
-                model_name = self.config.get("embed_model_name", "BAAI/bge-m3")
-                self.embed_provider = LocalEmbeddingProvider(model_name)
-                logger.info(f"[MemoryCore] 已注册本地嵌入模型: {model_name}（懒加载，首次使用时才初始化）")
-            except ImportError:
-                logger.warning("[MemoryCore] sentence-transformers 未安装，嵌入不可用")
-            except Exception as e:
-                logger.warning(f"[MemoryCore] 本地嵌入模型注册失败: {e}")
+            self._init_embed_provider(self.config["embed_provider_id"])
 
         # Capturer
         self.capturer = Capturer(
@@ -898,6 +890,41 @@ class MemoryCore:
                 pass
         self._initialized = False
 
+    def _init_embed_provider(self, embed_id: str):
+        """根据 embed_provider_id 动态创建/切换 EmbeddingProvider
+
+        支持三种后端（对应模型提供商中的 type）:
+          - "local"           → LocalEmbeddingProvider (sentence-transformers)
+          - type="embed:local"  → LocalEmbeddingProvider
+          - type="embed:ollama" → OllamaEmbeddingProvider
+          - type="embed:api"    → RemoteEmbeddingProvider
+        """
+        if not embed_id:
+            self.embed_provider = None
+            return
+
+        from ..core.embed_providers import create_embed_provider
+
+        model_name = self.config.get("embed_model_name", "BAAI/bge-m3")
+        providers = self.config.get("_providers", [])
+        new_provider = create_embed_provider(embed_id, providers, model_name)
+
+        if new_provider is not None:
+            self.embed_provider = new_provider
+            logger.info(
+                "[MemoryCore] 嵌入模型已切换: %s (%s)",
+                embed_id,
+                type(new_provider).__name__,
+            )
+            # 同步给下游模块
+            if hasattr(self, "capturer") and self.capturer:
+                self.capturer.embed_provider = new_provider
+            if hasattr(self, "lifecycle") and self.lifecycle:
+                self.lifecycle.embed_provider = new_provider
+        else:
+            logger.warning("[MemoryCore] 嵌入提供商 %r 未找到，禁用向量检索", embed_id)
+            self.embed_provider = None
+
     def reload_config(self, config: dict[str, Any]):
         self.config.update(config)
         if self.injector:
@@ -913,17 +940,8 @@ class MemoryCore:
             if "judge_provider_id" in config:
                 self.llm_provider.set_judge_provider(config["judge_provider_id"])
         # 切换嵌入模型
-        embed_id = config.get("embed_provider_id")
-        if embed_id == "local" and self.embed_provider is None:
-            try:
-                from ..core.embed_providers import LocalEmbeddingProvider
-                model_name = config.get("embed_model_name", "BAAI/bge-m3")
-                self.embed_provider = LocalEmbeddingProvider(model_name)
-                logger.info(f"[MemoryCore] 配置变更→创建本地嵌入模型: {model_name}")
-            except Exception as e:
-                logger.warning(f"[MemoryCore] 本地嵌入创建失败: {e}")
-        elif self.embed_provider and embed_id and embed_id != "local":
-            self.embed_provider.set_provider(embed_id)
+        if "embed_provider_id" in config:
+            self._init_embed_provider(config["embed_provider_id"])
 
     # 向后兼容 — 旧的 memory_core.on_message 接口
     async def on_message(self, event, sender_name: str = "") -> str | None:

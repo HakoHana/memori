@@ -407,11 +407,21 @@ _CONFIG_META = {
 @router.get("/v1/config")
 async def get_config(core: MemoryCore = Depends(get_core)):
     """获取当前配置（含元数据）"""
-    # 从模型提供商提取选项列表
     providers = core.config.get("_providers", [])
-    provider_names = [p.get("name", "") for p in providers if p.get("name")]
-    # 嵌入模型额外包含 "local" 选项（使用本地 sentence-transformers）
-    embed_options = ["local"] + provider_names if provider_names else ["local"]
+    # 按 type 过滤：LLM 提供商（type=llm 或不设置）
+    llm_providers = [
+        p for p in providers
+        if p.get("name") and p.get("type", "llm") == "llm"
+    ]
+    llm_names = [p["name"] for p in llm_providers]
+    # 嵌入提供商（type 以 embed: 开头）
+    embed_providers = [
+        p for p in providers
+        if p.get("name") and p.get("type", "").startswith("embed:")
+    ]
+    embed_names = [p["name"] for p in embed_providers]
+    # 嵌入模型额外包含 "local" 选项（sentence-transformers）
+    embed_options = ["local"] + embed_names if embed_names else ["local"]
 
     groups = {}
     for key, meta in _CONFIG_META.items():
@@ -428,7 +438,7 @@ async def get_config(core: MemoryCore = Depends(get_core)):
         # 三个模型字段动态注入 select 选项
         if key in ("llm_provider_id", "judge_provider_id"):
             entry["type"] = "select"
-            entry["options"] = provider_names if provider_names else [""]
+            entry["options"] = llm_names if llm_names else [""]
         elif key == "embed_provider_id":
             entry["type"] = "select"
             entry["options"] = embed_options
@@ -852,18 +862,16 @@ async def embed_and_dedup(
     logger = logging.getLogger("memori")
     start_ts = time.time()
 
-    # 创建本地嵌入提供者（BAAI/bge-m3 = 1024维，支持中英文）
+    # 使用已配置的嵌入提供者
     embed_provider = getattr(core, "embed_provider", None)
     if embed_provider is None:
-        try:
-            from ..core.embed_providers import LocalEmbeddingProvider
-            embed_provider = LocalEmbeddingProvider("BAAI/bge-m3")
-            core.embed_provider = embed_provider
-            if core.capturer:
-                core.capturer.embed_provider = embed_provider
-            logger.info("[embed-dedup] 创建 LocalEmbeddingProvider")
-        except Exception as e:
-            raise HTTPException(500, f"无法创建嵌入提供者: {e}")
+        # 尝试从配置创建
+        embed_id = core.config.get("embed_provider_id", "")
+        if embed_id:
+            core._init_embed_provider(embed_id)
+            embed_provider = core.embed_provider
+    if embed_provider is None:
+        raise HTTPException(400, "未配置嵌入模型。请在设置 → 模型提供商 中添加嵌入模型并启用")
 
     # 清除旧的 384维 embedding（之前用 all-MiniLM-L6-v2 生成的），改用 1024维 bge-m3
     try:

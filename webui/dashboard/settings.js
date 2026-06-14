@@ -41,12 +41,14 @@ function buildHTML(groups) {
   html += '<div class="card"><h2>🔌 模型提供商</h2>';
   html += '<p style="color:#888;font-size:0.85em;margin-bottom:12px">在「基础」中选用的 ID 需与此处一致</p>';
   html += '<table class="settings-prov-table"><thead><tr>';
+  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">类型</th>';
   html += '<th style="padding:8px 6px;text-align:left;font-weight:600">ID</th>';
   html += '<th style="padding:8px 6px;text-align:left;font-weight:600">API 地址</th>';
   html += '<th style="padding:8px 6px;text-align:left;font-weight:600">API Key</th>';
   html += '<th style="padding:8px 6px;text-align:left;font-weight:600">模型</th><th></th>';
   html += '</tr></thead><tbody id="settings-prov-tbody"></tbody></table>';
   html += '<button class="btn-sm" onclick="renderSettingsPage.addProv()" style="margin-top:8px">+ 添加</button>';
+  html += '<p style="color:#999;font-size:0.8em;margin-top:6px">类型说明: LLM=对话模型, Embed-API=远程API嵌入, Embed-Ollama=Ollama嵌入, Embed-Local=本地sentence-transformers(需pip安装)</p>';
   html += '</div>';
 
   // 系统操作
@@ -75,6 +77,7 @@ async function save() {
     if (!name) return;
     providers.push({
       name: name,
+      type: tr.querySelector(".pv_t")?.value || "llm",
       api_base: tr.querySelector(".pv_b")?.value?.trim() || "",
       api_key: tr.querySelector(".pv_k")?.value || "",
       model: tr.querySelector(".pv_m")?.value?.trim() || "",
@@ -111,8 +114,22 @@ function addProvRow(p) {
   var tb = document.getElementById("settings-prov-tbody");
   if (!tb) return;
   var tr = document.createElement("tr");
+  var ptype = p.type || "llm";
+  // 构建类型下拉
+  var typeOpts = [
+    {v:"llm", l:"LLM"},
+    {v:"embed:api", l:"Embed-API"},
+    {v:"embed:ollama", l:"Embed-Ollama"},
+    {v:"embed:local", l:"Embed-Local"},
+  ];
+  var typeHtml = '<select class="pv_t" style="width:100%;padding:6px 4px;border:1px solid #ddd;border-radius:6px;font-size:0.85em">';
+  for (var i = 0; i < typeOpts.length; i++) {
+    typeHtml += '<option value="' + typeOpts[i].v + '"' + (ptype === typeOpts[i].v ? ' selected' : '') + '>' + typeOpts[i].l + '</option>';
+  }
+  typeHtml += '</select>';
   tr.innerHTML =
-    '<td><input class="pv_n" value="' + esc(p.name||"") + '" placeholder="my-llm" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box"></td>' +
+    '<td>' + typeHtml + '</td>' +
+    '<td><input class="pv_n" value="' + esc(p.name||"") + '" placeholder="my-model" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box"></td>' +
     '<td><input class="pv_b" value="' + esc(p.api_base||"") + '" placeholder="https://api.openai.com/v1" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box"></td>' +
     '<td><input class="pv_k" type="password" value="' + esc(p.api_key||"") + '" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box"></td>' +
     '<td><input class="pv_m" value="' + esc(p.model||"") + '" placeholder="gpt-4o" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box"></td>' +

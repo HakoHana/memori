@@ -32,20 +32,20 @@ function buildHTML(groups) {
       } else {
         input = '<input type="text" id="' + id + '" value="' + esc(val) + '">';
       }
-      html += '<div class="field"><label style="flex:1;font-size:0.92em;font-weight:500;color:#333;min-width:160px">' + esc(f.label) + hint + "</label>" + input + "</div>";
+      html += '<div class="field"><label>' + esc(f.label) + hint + "</label>" + input + "</div>";
     }
     html += "</div>";
   }
 
   // 模型提供商
   html += '<div class="card"><h2>🔌 模型提供商</h2>';
-  html += '<p style="color:#888;font-size:0.85em;margin-bottom:12px">在「基础」中选用的 ID 需与此处一致</p>';
+  html += '<p class="field-hint" style="margin-bottom:12px">在「基础」中选用的 ID 需与此处一致</p>';
   html += '<table class="settings-prov-table"><thead><tr>';
-  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">类型</th>';
-  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">ID</th>';
-  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">API 地址</th>';
-  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">API Key</th>';
-  html += '<th style="padding:8px 6px;text-align:left;font-weight:600">模型</th><th></th>';
+  html += '<th>类型</th>';
+  html += '<th>ID</th>';
+  html += '<th>API 地址</th>';
+  html += '<th>API Key</th>';
+  html += '<th>模型</th><th></th>';
   html += '</tr></thead><tbody id="settings-prov-tbody"></tbody></table>';
   html += '<button class="btn-sm" onclick="renderSettingsPage.addProv()" style="margin-top:8px">+ 添加</button>';
   html += '<p style="color:#999;font-size:0.8em;margin-top:6px">类型说明: LLM=对话模型, Embed-API=远程API嵌入, Embed-Ollama=Ollama嵌入, Embed-Local=本地sentence-transformers(需pip安装)</p>';

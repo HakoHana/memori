@@ -267,7 +267,7 @@ class DiaryStore(BaseDbStore):
             (items, total_count)
         """
         offset = (page - 1) * size
-        columns = ("id", "user_id", "date", "importance", "sentiment", "topics", "created_at")
+        columns = ("id", "user_id", "date", "content", "importance", "sentiment", "topics", "created_at")
 
         if uid:
             rows = await self.fetch(
@@ -288,7 +288,7 @@ class DiaryStore(BaseDbStore):
 
         items = []
         for r in rows:
-            topics_raw = r[5]
+            topics_raw = r[6]
             topics = []
             if topics_raw:
                 try:
@@ -297,9 +297,9 @@ class DiaryStore(BaseDbStore):
                 except Exception:
                     topics = [str(topics_raw)]
             items.append({
-                "id": r[0], "user_id": r[1], "date": r[2],
-                "importance": r[3], "sentiment": r[4], "topics": topics,
-                "created_at": r[6],
+                "id": r[0], "user_id": r[1], "date": r[2], "content": r[3],
+                "importance": r[4], "sentiment": r[5], "topics": topics,
+                "created_at": r[7],
             })
         return items, total
 

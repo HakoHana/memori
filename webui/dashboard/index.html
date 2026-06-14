@@ -4,7 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>memori Dashboard</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <link rel="stylesheet" href="./styles.css?v=3" />
+    <style>
+      /* 强制覆盖 — 防止缓存旧版 CSS */
+      .timeline-bar {
+        background: rgba(255, 255, 255, 0.5) !important;
+        border: 1px solid rgba(0, 0, 0, 0.08) !important;
+      }
+      .timeline-node {
+        background: transparent !important;
+        border: 2px solid rgba(0, 0, 0, 0.08) !important;
+      }
+      [data-theme="dark"] .timeline-bar {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+      }
+      [data-theme="dark"] .timeline-node {
+        background: transparent !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+      }
+    </style>
     <script src="./i18n.js"></script>
   </head>
   <body>
@@ -99,8 +120,8 @@
                 <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
               </select>
               <select id="mem-page-size" class="select input" style="width:auto">
-                <option value="20">20条/页</option>
-                <option value="50" selected>50条/页</option>
+                <option value="20" selected>20条/页</option>
+                <option value="50">50条/页</option>
                 <option value="100">100条/页</option>
               </select>
             </div>
@@ -121,6 +142,33 @@
               <button class="btn btn-sm btn-danger" id="batch-delete">删除选中</button>
             </div>
             <button class="btn btn-sm btn-ghost" id="batch-clear">清空</button>
+          </div>
+          <!-- Star Trail Timeline — 今日回忆星轨 -->
+          <div class="memory-timeline" id="memory-timeline">
+            <div class="timeline-header">
+              <span class="timeline-title">✨ 今日星轨</span>
+              <span class="timeline-count" id="timeline-count">今天还没留下回忆呢…</span>
+            </div>
+            <div class="timeline-track">
+              <div class="timeline-bar" id="timeline-bar">
+                <div class="timeline-bar-fill" id="timeline-bar-fill"></div>
+                <div class="timeline-nodes">
+                  <span class="timeline-node"></span>
+                  <span class="timeline-node"></span>
+                  <span class="timeline-node"></span>
+                  <span class="timeline-node"></span>
+                  <span class="timeline-node"></span>
+                </div>
+                <span class="timeline-star" id="timeline-star">⭐</span>
+              </div>
+            </div>
+            <div class="timeline-labels">
+              <span>1</span>
+              <span>2</span>
+              <span>3</span>
+              <span>4</span>
+              <span>5</span>
+            </div>
           </div>
         </section>
         <!-- Page: Recall -->

@@ -701,6 +701,42 @@ class AtomStore(BaseDbStore, MemoryStore):
                 VALUES (?,?,?,?,1,?,?,?)
             """, (uid, summary, full, tags, now, now, now))
 
+    async def save_persona_embedding(self, uid: str, embedding: list[float], model_name: str = ""):
+        """保存画像 embedding（供相似检测用）"""
+        import json
+        blob = json.dumps(embedding).encode("utf-8")
+        await self.execute(
+            "UPDATE user_persona SET persona_embedding=?, embedding_model=?, updated_at=? WHERE uid=?",
+            (blob, model_name, time.time(), uid),
+        )
+
+    async def get_all_persona_embeddings(self) -> list[dict]:
+        """获取所有有 embedding 的用户画像（供梦境相似检测用）"""
+        rows = await self.fetch("""
+            SELECT cp.uid, cp.primary_name, up.persona_embedding, up.embedding_model,
+                   up.summary, up.tags, cp.identity_confidence
+            FROM canonical_users cp
+            JOIN user_persona up ON cp.uid = up.uid
+            WHERE up.persona_embedding IS NOT NULL AND up.persona_embedding != ''
+        """)
+        import json
+        result = []
+        for r in rows:
+            try:
+                emb = json.loads(r[2].decode("utf-8")) if isinstance(r[2], bytes) else json.loads(r[2])
+            except (json.JSONDecodeError, Exception):
+                emb = []
+            result.append({
+                "uid": r[0],
+                "primary_name": r[1] or r[0],
+                "embedding": emb,
+                "embedding_model": r[3] or "",
+                "summary": (r[4] or "")[:200],
+                "tags": json.loads(r[5]) if isinstance(r[5], str) and r[5] else [],
+                "identity_confidence": r[6] or 0.3,
+            })
+        return result
+
     # ── 通用查询（替代 routes.py 中的裸 SQL） ────────────
 
     async def list_users_with_persona(self) -> list[dict]:

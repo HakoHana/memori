@@ -320,6 +320,7 @@ class MemoryCore:
             capturer=self.capturer,
             prompts_dir=self._prompts_dir,
             config=self.config,
+            embed_provider=self.embed_provider,
         )
         self.retriever = Retriever(
             atom_store=self.atom_store,
@@ -432,10 +433,9 @@ class MemoryCore:
                 await asyncio.sleep(86400)
                 if not self.lifecycle:
                     continue
-                await self.lifecycle.run_daily_decay()
+                await self.lifecycle.run_daily_maintenance()
                 await self.lifecycle.run_daily_archive()
                 await self.lifecycle.run_daily_cleanup()
-                await self.lifecycle.run_daily_semantic_dedup()
             except asyncio.CancelledError:
                 break
             except Exception as e:

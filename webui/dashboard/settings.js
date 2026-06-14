@@ -18,8 +18,8 @@ function buildHTML(groups) {
       var hint = f.hint ? '<span class="field-hint">' + esc(f.hint) + '</span>' : "";
       var input = "";
       if (f.type === "bool") {
-        input = '<label><input type="checkbox" id="' + id + '" ' + (val ? "checked" : "") + '> ' + esc(f.label) + hint + "</label>";
-        html += '<div class="field">' + input + "</div>";
+        input = '<label><input type="checkbox" id="' + id + '" ' + (val ? "checked" : "") + '> ' + esc(f.label) + "</label>";
+        html += '<div class="field">' + input + hint + "</div>";
         continue;
       } else if (f.type === "text") {
         input = '<textarea id="' + id + '" rows="3">' + esc(val) + "</textarea>";
@@ -32,14 +32,14 @@ function buildHTML(groups) {
       } else {
         input = '<input type="text" id="' + id + '" value="' + esc(val) + '">';
       }
-      html += '<div class="field"><label>' + esc(f.label) + hint + "</label>" + input + "</div>";
+      html += '<div class="field"><label>' + esc(f.label) + "</label>" + input + hint + "</div>";
     }
     html += "</div>";
   }
 
   // 模型提供商
   html += '<div class="card"><h2>🔌 模型提供商</h2>';
-  html += '<p class="field-hint" style="margin-bottom:12px">在「基础」中选用的 ID 需与此处一致</p>';
+  html += '<p class="settings-desc">在「基础」中选用的 ID 需与此处一致</p>';
   html += '<table class="settings-prov-table"><thead><tr>';
   html += '<th>类型</th>';
   html += '<th>ID</th>';
@@ -48,7 +48,7 @@ function buildHTML(groups) {
   html += '<th>模型</th><th></th>';
   html += '</tr></thead><tbody id="settings-prov-tbody"></tbody></table>';
   html += '<button class="btn-sm" onclick="renderSettingsPage.addProv()" style="margin-top:8px">+ 添加</button>';
-  html += '<p style="color:#999;font-size:0.8em;margin-top:6px">类型说明: LLM=对话模型, Embed-API=远程API嵌入, Embed-Ollama=Ollama嵌入, Embed-Local=本地sentence-transformers(需pip安装)</p>';
+  html += '<p class="settings-desc" style="margin-top:6px">类型说明: LLM=对话模型, Embed-API=远程API嵌入, Embed-Ollama=Ollama嵌入, Embed-Local=本地sentence-transformers(需pip安装)</p>';
   html += '</div>';
 
   // 系统操作

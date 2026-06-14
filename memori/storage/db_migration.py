@@ -26,7 +26,7 @@ from .base_store import BaseDbStore
 # ── 当前 schema 版本 ──────────────────────────────────────
 # 升级此值表示有一套新的迁移要跑。
 # 迁移方法名必须为 _migrate_v{version} 或 _migrate_{scope}_v{version}。
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 
 # ── 每类数据库的 schema 版本（默认 0 表示由 Store.initialize() 统一建表） ──
 VERSIONS: dict[str, int] = {
@@ -56,6 +56,12 @@ MIGRATION_MANIFEST: dict[int, dict[str, Any]] = {
         "type": "schema",
         "requires_backup": True,
         "tables_affected": ["memory_atoms"],
+    },
+    6: {
+        "description": "user_persona.persona_embedding 列（画像相似检测用）",
+        "type": "schema",
+        "requires_backup": False,
+        "tables_affected": ["user_persona"],
     },
 }
 
@@ -446,7 +452,23 @@ class DBMigration(BaseDbStore):
             await db.commit()
         logger.info("[Migration] v5 完成: 桥表 atoms_diary_links 已就绪")
 
-    async def _migrate_graph_v1(self):
+    async def _migrate_v6(self):
+        """v6: user_persona.persona_embedding 列（画像相似检测用）"""
+        async with self._connect() as db:
+            try:
+                await db.execute(
+                    "ALTER TABLE user_persona ADD COLUMN persona_embedding BLOB DEFAULT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                await db.execute(
+                    "ALTER TABLE user_persona ADD COLUMN embedding_model TEXT DEFAULT ''"
+                )
+            except Exception:
+                pass
+            await db.commit()
+        logger.info("[Migration] v6 完成: persona_embedding 列已就绪")
         """v1: 图谱时间戳从 ISO 8601 字符串统一为 epoch float"""
         from datetime import datetime
 

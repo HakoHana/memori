@@ -54,12 +54,14 @@ class PersonaEngine(IPersonaEngine):
         capturer: ICapturer,
         prompts_dir: str,
         config: dict[str, Any] | None = None,
+        embed_provider=None,
     ):
         self.llm = llm_provider
         self.atom_store = atom_store
         self.diary_store = diary_store
         self.capturer = capturer
         self.config = config or {}
+        self._embed_provider = embed_provider
 
         prompt_path = Path(prompts_dir) / "persona.txt"
         self._prompt_full = (
@@ -155,6 +157,7 @@ class PersonaEngine(IPersonaEngine):
             except Exception:
                 pass
 
+            await self._generate_and_save_embedding(uid)
             return True
         except Exception as e:
             logger.warning(f"[Memory] 画像增量更新失败 {uid}: {e}")
@@ -222,6 +225,7 @@ class PersonaEngine(IPersonaEngine):
                     uid, new_persona.strip(), new_persona.strip(), incremental=False
                 )
                 self._cache.pop(uid, None)
+                await self._generate_and_save_embedding(uid)
                 return new_persona.strip()
         except Exception as e:
             logger.warning(f"[Memory] 全量重建画像失败 {uid}: {e}")
@@ -250,3 +254,23 @@ class PersonaEngine(IPersonaEngine):
 
     async def invalidate_cache(self, uid: str):
         self._cache.pop(uid, None)
+
+    # ═══════════════════════════════════════════════════
+    #  画像嵌入（供身份相似检测用）
+    # ═══════════════════════════════════════════════════
+
+    async def _generate_and_save_embedding(self, uid: str):
+        """画像更新后自动生成 embedding 并保存"""
+        if not self._embed_provider:
+            return
+        try:
+            summary = await self.atom_store.get_persona_summary(uid)
+            if not summary or len(summary.strip()) < 10:
+                return
+            emb = await self._embed_provider.embed(summary[:500])
+            if emb:
+                await self.atom_store.save_persona_embedding(
+                    uid, emb, self._embed_provider.model_name,
+                )
+        except Exception as e:
+            logger.debug(f"[Persona] 生成画像 embedding 失败 {uid}: {e}")

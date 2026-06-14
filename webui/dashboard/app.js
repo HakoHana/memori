@@ -974,7 +974,7 @@
           id: item.id,
           memory_id: item.id,
           date: item.date || "",
-          summary: cleanDisplayText(item.content || "").slice(0, 200),
+          summary: cleanDisplayText(item.content || ""),
           content: item.content || "",
           memory_type: typeStr,
           importance: item.avg_importance != null ? Math.round(item.avg_importance * 10 * 10) / 10 : 5,
@@ -985,13 +985,77 @@
         };
       });
 
+
       renderMemoriesVirtual({ resetScroll: true });
       updateMemoryPagination();
       updateBatchBar();
+      updateTimeline();  // 更新今日星轨
     } catch (e) {
       showToast(e.message || "加载失败", true);
       var list = document.getElementById("memories-list");
       if (list) list.innerHTML = '<div class="mem-card-empty">' + window.t("table.noData") + '</div>';
+    }
+  }
+
+  /* ================================================================
+     Star Trail Timeline — 今日星轨（5条记忆满）
+     ================================================================ */
+  async function updateTimeline() {
+    var star = document.getElementById("timeline-star");
+    var fill = document.getElementById("timeline-bar-fill");
+    var countEl = document.getElementById("timeline-count");
+    if (!star || !fill) return;
+    try {
+      var data = unwrapApiData(await apiRequest("memories/today-stats")) || {};
+      var total = data.total || 0;
+
+      // 5条记忆 = 100%
+      var pct = Math.min(100, (total / 5) * 100);
+      var fullNodes = Math.min(5, total);
+
+      // 更新计数文字
+      if (countEl) {
+        if (total === 0) {
+          countEl.textContent = "今天还没留下回忆呢…";
+        } else if (total < 5) {
+          countEl.innerHTML = "今日活跃度 <strong>" + total + "/5</strong> ✨";
+        } else {
+          countEl.innerHTML = "今日活跃度 <strong>5/5</strong> 圆满达成！🌟";
+        }
+      }
+
+      // 填充进度条
+      fill.style.width = pct + "%";
+      fill.classList.toggle("full", total >= 5);
+
+      // 移动星星
+      star.style.left = pct + "%";
+
+      // 点亮节点
+      var nodes = document.querySelectorAll(".timeline-node");
+      nodes.forEach(function(n, i) {
+        n.classList.toggle("lit", i < fullNodes);
+      });
+
+      // 更新标签
+      var labels = document.querySelectorAll(".timeline-labels span");
+      labels.forEach(function(l, i) {
+        l.classList.toggle("active", i < fullNodes);
+      });
+
+      // 满星闪烁
+      star.classList.remove("sparkle");
+      if (total >= 5) {
+        void star.offsetWidth;
+        star.classList.add("sparkle");
+        star.style.filter = "";
+      } else if (total >= 3) {
+        star.style.filter = "drop-shadow(0 0 10px rgba(255, 215, 0, 0.7))";
+      } else {
+        star.style.filter = "";
+      }
+    } catch (_) {
+      // 静默失败
     }
   }
 
@@ -1060,9 +1124,51 @@
     var ps = state.memory.pageSize;
     var t = state.memory.total;
     var tp = Math.max(1, Math.ceil(t / ps));
-    document.getElementById("mem-pagination-info").textContent = window.t("common.page", p, tp, t);
+    var info = document.getElementById("mem-pagination-info");
+    if (info) {
+      info.textContent = p + " / " + tp + " 页 · 共 " + t + " 条";
+      info.dataset.page = p;
+      info.dataset.totalPages = tp;
+    }
     document.getElementById("mem-prev").disabled = p <= 1;
     document.getElementById("mem-next").disabled = !state.memory.hasMore;
+  }
+
+  function initPageJump() {
+    var info = document.getElementById("mem-pagination-info");
+    if (!info) return;
+    info.addEventListener("click", function() {
+      if (info.querySelector("input")) return;
+      var cur = parseInt(info.dataset.page) || 1;
+      var total = parseInt(info.dataset.totalPages) || 1;
+      var input = document.createElement("input");
+      input.type = "number";
+      input.className = "pagination-info-input";
+      input.min = 1;
+      input.max = total;
+      input.value = cur;
+      info.textContent = "";
+      info.appendChild(input);
+      input.focus();
+      input.select();
+
+      function commit() {
+        var val = parseInt(input.value) || cur;
+        val = Math.max(1, Math.min(val, total));
+        if (val !== cur) {
+          state.memory.page = val;
+          fetchMemories();
+        } else {
+          updateMemoryPagination();
+        }
+      }
+
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Enter") { input.blur(); }
+        if (e.key === "Escape") { updateMemoryPagination(); }
+      });
+    });
   }
 
   async function deleteSingleMemory(id) {
@@ -1162,6 +1268,8 @@
     document.getElementById("mem-next").addEventListener("click", function() {
       if (state.memory.hasMore) { state.memory.page++; fetchMemories(); }
     });
+    initPageJump();
+    updateTimeline();  // 初始加载星轨
   }
 
   function debounce(fn, ms) {
@@ -1426,26 +1534,11 @@
     }
   }
 
-  function updateTimeline(stats) {
-    var fill = document.getElementById("timeline-fill");
-    var label = document.getElementById("timeline-label");
-    if (!fill || !label) return;
-    var total = (stats && stats.atoms) || 0;
-    // 假设目标 100 条/天，计算进度
-    var target = 100;
-    var pct = Math.min(100, Math.round((total / target) * 100));
-    fill.style.width = pct + "%";
-    label.textContent = "今天已积累 " + total + " 条记忆 · " + pct + "%";
-  }
-
   async function startHealthPolling() {
     async function tick() {
       try {
         var health = await fetch("/health").then(function(r) { return r.json(); }).catch(function() { return {}; });
         updateStatusDot(health);
-        // 同时尝试获取 stats 更新时间线
-        var stats = await apiRequest("stats").then(unwrapApiData).catch(function() { return {}; });
-        updateTimeline(stats);
       } catch (_) {}
     }
     tick();

@@ -74,6 +74,33 @@ async def list_memories(
     return {"ok": True, "items": items, "total": total}
 
 
+@router.get("/v1/memories/timeline")
+async def get_timeline(
+    uid: str = Query(..., description="用户 ID"),
+    year: str = Query("", description="年份过滤"),
+    month: str = Query("", description="月份过滤"),
+    core: MemoryCore = Depends(get_core),
+):
+    """按时间线浏览记忆日期"""
+    dates = await core.diary_store.get_timeline_dates(uid, year, month)
+    return {"ok": True, "dates": dates}
+
+
+@router.get("/v1/memories/today-stats")
+async def get_today_stats(
+    uid: str = Query("", description="用户 ID（空=全部用户）"),
+    core: MemoryCore = Depends(get_core),
+):
+    """获取今日记忆数量（用于页面底部活跃度进度条）"""
+    today = time.strftime("%Y-%m-%d")
+    row = await core.diary_store.fetchone(
+        "SELECT COUNT(*) FROM diary_entries WHERE date=? AND (?='' OR user_id=?) AND status='active'",
+        (today, uid, uid),
+    )
+    total = row[0] if row else 0
+    return {"ok": True, "total": total}
+
+
 @router.get("/v1/memories/{memory_id}", response_model=dict)
 async def get_memory_detail(memory_id: int, core: MemoryCore = Depends(get_core)):
     """获取单条记忆详情"""
@@ -116,18 +143,6 @@ async def delete_memory(memory_id: int, core: MemoryCore = Depends(get_core)):
     svc = PageService(core)
     result = await svc.delete_memory(memory_id)
     return {"ok": result.get("ok", True), "cleaned_atoms": result.get("data", {}).get("cleaned_atoms", 0)}
-
-
-@router.get("/v1/memories/timeline")
-async def get_timeline(
-    uid: str = Query(..., description="用户 ID"),
-    year: str = Query("", description="年份过滤"),
-    month: str = Query("", description="月份过滤"),
-    core: MemoryCore = Depends(get_core),
-):
-    """按时间线浏览记忆日期"""
-    dates = await core.diary_store.get_timeline_dates(uid, year, month)
-    return {"ok": True, "dates": dates}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -367,8 +382,6 @@ _CONFIG_META = {
                      "hint": "tags=标签, summary=一句话摘要, full=完整描述"},
     "pre_filter_enabled": {"type": "bool", "default": False, "label": "预过滤（新用户降噪）", "group": "注入",
                            "hint": "启用后新用户短消息/重复消息/纯 emoji 不触发 LLM"},
-    "hotcache_max_per_user": {"type": "int", "default": 50, "label": "热缓存容量(条)", "group": "整理",
-                               "hint": "每用户热缓存最多保留多少条消息，超出的最早消息被丢弃"},
     "consolidation_rounds": {"type": "int", "default": 10, "label": "整理触发轮数", "group": "整理",
                               "hint": "Bot 参与对话达到此轮数后自动触发日记整理"},
     "idle_timeout_minutes": {"type": "int", "default": 60, "label": "空闲超时(分钟)", "group": "整理",
@@ -385,6 +398,8 @@ _CONFIG_META = {
                                 "hint": "每写 N 篇日记触发一次用户画像更新"},
     "max_diary_tokens": {"type": "int", "default": 500, "label": "日记 token 上限", "group": "记忆",
                          "hint": "LLM 写日记的最大 token 数，越长日记越详细但越贵"},
+    "hotcache_max_per_user": {"type": "int", "default": 50, "label": "热缓存容量(条)", "group": "记忆",
+                               "hint": "每用户热缓存最多保留多少条消息，超出的最早消息被丢弃"},
     "decay_rate": {"type": "float", "default": 0.99, "label": "日衰减率", "group": "衰减",
                    "hint": "每天 importance × 衰减率。0.99 = 约 69 天减半, 0.95 = 约 14 天减半"},
     "decay_enabled": {"type": "bool", "default": True, "label": "启用衰减", "group": "衰减",

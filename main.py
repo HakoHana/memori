@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import warnings
 
 from astrbot.api.event import AstrMessageEvent, filter
@@ -172,9 +173,71 @@ class MemoriPlugin(Star):
 
     def _get_sender_name(self, event) -> str:
         try:
-            return AstrBotCtx().get_sender_name(event)
+            name = AstrBotCtx().get_sender_name(event)
+            if name:
+                return name
         except Exception:
-            return ""
+            pass
+        return ""
+
+    async def _ensure_user_identity(self, user_id: str, event_sender_name: str = "") -> str:
+        """查表 → 没有则创建 → 返回规范显示名
+
+        顺序：
+        1. 查 user_identities 有无此人的 canonical uid
+        2. 有 → 取 canonical_users.primary_name
+        3. 无 → 建新 uid + 注册 user_registry
+        4. 返回最终显示名
+        """
+        if not self.core or not self.core.atom_store:
+            return event_sender_name or f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+
+        try:
+            platform_id = f"qq:{user_id}"
+            # 1. 查 canonical uid
+            row = await self.core.atom_store.fetchone(
+                "SELECT uid FROM user_identities WHERE platform_id=?", (platform_id,)
+            )
+
+            if row:
+                cuid = row[0]
+                # 已有身份，取规范名
+                crow = await self.core.atom_store.fetchone(
+                    "SELECT primary_name FROM canonical_users WHERE uid=?", (cuid,)
+                )
+                name = (crow[0] or event_sender_name or "") if crow else (event_sender_name or "")
+                if not name:
+                    name = f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+                # 更新最后活跃
+                await self.core.atom_store.execute(
+                    "UPDATE user_identities SET display_name=?, last_seen=? WHERE platform_id=?",
+                    (name, time.time(), platform_id),
+                )
+                # 确保 user_registry 存在
+                await self.core.atom_store.ensure_user(user_id, name)
+                return name
+
+            # 2. 新用户：创建 canonical uid
+            import uuid
+            cuid = "u_" + uuid.uuid4().hex[:12]
+            now = time.time()
+            name = event_sender_name.strip() if event_sender_name and event_sender_name.strip() else (
+                f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+            )
+            await self.core.atom_store.execute(
+                "INSERT INTO canonical_users (uid, primary_name, created_at, updated_at) VALUES (?,?,?,?)",
+                (cuid, name, now, now),
+            )
+            await self.core.atom_store.execute(
+                "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen, last_seen, source) VALUES (?,?,?,?,?,?,?)",
+                (platform_id, cuid, "qq", name, now, now, "auto"),
+            )
+            await self.core.atom_store.ensure_user(user_id, name)
+            return name
+
+        except Exception as e:
+            logger.warning(f"[memori] _ensure_user_identity 异常: {e}")
+            return event_sender_name or f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
 
     # ── 记忆注入：LLM 请求前 ──
 
@@ -194,17 +257,7 @@ class MemoriPlugin(Star):
             return
 
         uid = AstrBotCtx().get_user_id(event)
-        sender_name = self._get_sender_name(event)
-
-        if self.core.atom_store and uid:
-            try:
-                await self.core.atom_store.ensure_user(uid, sender_name)
-            except Exception:
-                pass
-            try:
-                await self.core.atom_store.ensure_canonical_user(f"qq:{uid}", sender_name, "qq")
-            except Exception:
-                pass
+        sender_name = await self._ensure_user_identity(uid, self._get_sender_name(event))
 
         # 热缓存由 process_message 内部推入，此处不再重复 push
         system_prompt = getattr(event, "system_prompt", "") or ""
@@ -230,7 +283,7 @@ class MemoriPlugin(Star):
         try:
             uid = AstrBotCtx().get_user_id(event)
             txt = AstrBotCtx().get_conversation_text(event)
-            sender_name = self._get_sender_name(event)
+            sender_name = await self._ensure_user_identity(uid, self._get_sender_name(event))
 
             if not uid or not txt or txt.startswith("/"):
                 return

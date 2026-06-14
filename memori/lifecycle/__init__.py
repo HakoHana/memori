@@ -5,6 +5,7 @@ from .dedup import DedupEngine
 from .decay import DecayEngine, compute_decay_score
 from .cleanup import CleanupEngine
 from .archiver import Archiver
+from .identity import IdentityEngine, cosine_similarity
 
 __all__ = [
     "LifecycleManager",
@@ -13,4 +14,6 @@ __all__ = [
     "compute_decay_score",
     "CleanupEngine",
     "Archiver",
+    "IdentityEngine",
+    "cosine_similarity",
 ]

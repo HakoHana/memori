@@ -11,6 +11,7 @@ from .dedup import DedupEngine
 from .decay import DecayEngine, compute_decay_score
 from .cleanup import CleanupEngine
 from .archiver import Archiver
+from .identity import IdentityEngine
 
 
 class LifecycleManager:
@@ -58,6 +59,9 @@ class LifecycleManager:
                 )
             except Exception as e:
                 logger.warning(f"[Lifecycle] 归档模块初始化失败: {e}")
+
+        # 身份相似检测引擎
+        self.identity = IdentityEngine(atom_store, config)
 
         # 配置
         self._atom_store = atom_store
@@ -133,6 +137,17 @@ class LifecycleManager:
             logger.info(f"[Lifecycle] 全局衰减完成: {count} 条")
         await self.run_daily_cleanup()
 
+    async def run_daily_maintenance(self):
+        """每日记忆维护（一体化）：衰减 → 语义去重 → 身份相似检测
+
+        这三个是记忆维护的核心环节，放在一起做，
+        不分开调度，保证维护阶段的整体性。
+        供未来梦境状态机统一调度。
+        """
+        await self.run_daily_decay()
+        await self.run_daily_semantic_dedup()
+        await self.run_daily_identity_check()
+
     async def scan_contradictions(self, user_id: str | None = None) -> list[dict]:
         """扫描矛盾记忆 — 接口预留供梦境状态机使用
 
@@ -180,6 +195,43 @@ class LifecycleManager:
                 logger.info(f"[Lifecycle] 语义去重完成: {marked} 条标记为 dormant")
         except Exception as e:
             logger.warning(f"[Lifecycle] 语义去重异常: {e}")
+
+    # ── 身份相似检测 ──────────────────────────────────────
+
+    async def run_daily_identity_check(self, threshold: float = 0.85):
+        """每日扫描：对比所有用户画像嵌入，标记潜在同一人
+
+        供定时器 24h 调用。不自动合并，只标记。
+        """
+        try:
+            matches = await self.identity.scan_similar_personas(threshold=threshold)
+            for m in matches:
+                await self.identity.mark_similar_pair(
+                    m["uid_a"], m["uid_b"], m["similarity"],
+                )
+            if matches:
+                logger.info(
+                    f"[Lifecycle] 身份检测完成: {len(matches)} 对潜在同一人"
+                )
+            else:
+                logger.debug("[Lifecycle] 身份检测完成: 无高相似度配对")
+        except Exception as e:
+            logger.warning(f"[Lifecycle] 身份检测异常: {e}")
+
+    # ── 梦境接口（预留） ──────────────────────────────────
+
+    async def scan_potential_duplicate_identities(
+        self, threshold: float = 0.85,
+    ) -> list[dict]:
+        """梦境状态机接口：扫描潜在重复身份
+
+        供未来梦境模块调用，不做自动标记，只返回结果供裁决。
+        """
+        return await self.identity.scan_similar_personas(threshold=threshold)
+
+    async def merge_identities(self, keep_uid: str, merge_uid: str) -> bool:
+        """梦境/手动确认后合并身份"""
+        return await self.identity.merge_identities(keep_uid, merge_uid)
 
     async def get_stats(self, user_id: str | None = None) -> dict:
         """生命周期统计"""

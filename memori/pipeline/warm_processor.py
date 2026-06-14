@@ -195,7 +195,22 @@ class WarmProcessor(IWarmProcessor):
         """给对话文本附加用户显示名（内部 uid 流转，给 LLM 前换为昵称）"""
         if not text or text.startswith("["):
             return text
-        display_name = sender_name or user_id
+        display_name = sender_name
+        if not display_name:
+            # 尝试从 atom_store 找显示名，避免 QQ 号泄露给 LLM
+            try:
+                if self.capturer and hasattr(self.capturer, '_store'):
+                    atom_store = getattr(self.capturer._store, 'atom_store', None) or getattr(self.capturer._store, '_atom', None)
+                    if atom_store:
+                        row = await atom_store.fetchone(
+                            "SELECT user_name FROM user_registry WHERE user_id=?", (user_id,)
+                        )
+                        if row and row[0]:
+                            display_name = row[0]
+            except Exception:
+                pass
+        if not display_name:
+            display_name = f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
         return f"[{display_name}]: {text}"
 
     async def _judge(self, tagged_text: str):

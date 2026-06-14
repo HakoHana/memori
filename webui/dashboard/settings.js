@@ -117,7 +117,8 @@ function addProvRow(p) {
   var ptype = p.type || "llm";
   // 构建类型下拉
   var typeOpts = [
-    {v:"llm", l:"LLM"},
+    {v:"llm", l:"LLM-API"},
+    {v:"llm:ollama", l:"LLM-Ollama"},
     {v:"embed:api", l:"Embed-API"},
     {v:"embed:ollama", l:"Embed-Ollama"},
     {v:"embed:local", l:"Embed-Local"},

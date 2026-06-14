@@ -8,30 +8,32 @@
 
 /* ----- Design Tokens (Light) ----------------------------------- */
 :root {
-  /* Surface — 暖紫基调 */
-  --bg-app: #f8f6fa;
-  --bg-sidebar: rgba(245, 240, 248, 0.75);
-  --bg-card: rgba(255, 255, 255, 0.75);
-  --bg-hover: rgba(155, 123, 218, 0.08);
-  --bg-active: rgba(155, 123, 218, 0.14);
+  /* Surface — 羊绒米白打底 */
+  --bg-app: #f4efe9;
+  --bg-sidebar: rgba(244, 239, 233, 0.8);
+  --bg-card: rgba(255, 255, 255, 0.78);
+  --bg-hover: rgba(178, 136, 208, 0.08);
+  --bg-active: rgba(178, 136, 208, 0.14);
   --bg-input: rgba(255, 255, 255, 0.7);
-  --bg-overlay: rgba(248, 246, 250, 0.85);
+  --bg-overlay: rgba(244, 239, 233, 0.85);
 
   /* Border */
-  --border-light: rgba(155, 123, 218, 0.12);
-  --border-normal: rgba(155, 123, 218, 0.2);
-  --border-focus: rgba(155, 123, 218, 0.4);
+  --border-light: rgba(178, 136, 208, 0.12);
+  --border-normal: rgba(178, 136, 208, 0.2);
+  --border-focus: rgba(178, 136, 208, 0.4);
 
   /* Text */
-  --text-primary: #2d2438;
-  --text-secondary: #8b7a9e;
-  --text-tertiary: #bfb0cc;
+  --text-primary: #2d2838;
+  --text-secondary: #8f7e9e;
+  --text-tertiary: #c0b0cc;
   --text-inverse: #ffffff;
 
-  /* Accent — 暖紫 */
-  --accent: #9b7bda;
-  --accent-light: rgba(155, 123, 218, 0.1);
-  --accent-hover: #8569c4;
+  /* Accent — 粉调薰衣草紫 + 浅粉点缀 */
+  --accent: #b288d0;
+  --accent-light: rgba(178, 136, 208, 0.1);
+  --accent-hover: #9c75b8;
+  --accent-pink: #f0b8ca;
+  --accent-pink-light: rgba(240, 184, 202, 0.15);
   --success: #6bb89a;
   --success-light: rgba(107, 184, 154, 0.12);
   --warning: #e8a87c;
@@ -41,10 +43,10 @@
   --danger-hover: #d46f76;
 
   /* Graph Node Colors — 柔化 */
-  --node-topic: #b39ddb;
+  --node-topic: var(--accent);
   --node-person: #80cbc4;
-  --node-fact: #ffd54f;
-  --node-summary: #f48fb1;
+  --node-fact: #e8c87a;
+  --node-summary: var(--accent-pink);
   --node-other: #bcaaa4;
 
   /* Spacing */
@@ -66,10 +68,10 @@
   --radius-full: 9999px;
 
   /* Shadow — 柔和 */
-  --shadow-xs: 0 1px 3px rgba(155, 123, 218, 0.06);
-  --shadow-sm: 0 2px 8px rgba(155, 123, 218, 0.08);
-  --shadow-md: 0 4px 16px rgba(155, 123, 218, 0.10);
-  --shadow-lg: 0 8px 32px rgba(155, 123, 218, 0.14);
+  --shadow-xs: 0 1px 3px rgba(178, 136, 208, 0.06);
+  --shadow-sm: 0 2px 8px rgba(178, 136, 208, 0.08);
+  --shadow-md: 0 4px 16px rgba(178, 136, 208, 0.10);
+  --shadow-lg: 0 8px 32px rgba(178, 136, 208, 0.14);
 
   /* Transition */
   --transition-fast: 150ms ease;
@@ -83,42 +85,44 @@
 
   /* Glass */
   --glass-border: rgba(255, 255, 255, 0.5);
-  --glass-shadow: 0 4px 24px rgba(155, 123, 218, 0.08);
+  --glass-shadow: 0 4px 24px rgba(178, 136, 208, 0.08);
 }
 
 /* ----- Design Tokens (Dark) ------------------------------------ */
 [data-theme="dark"] {
-  --bg-app: #1a1625;
-  --bg-sidebar: rgba(26, 22, 37, 0.85);
-  --bg-card: rgba(42, 36, 56, 0.8);
-  --bg-hover: rgba(155, 123, 218, 0.12);
-  --bg-active: rgba(155, 123, 218, 0.18);
-  --bg-input: rgba(42, 36, 56, 0.7);
-  --bg-overlay: rgba(26, 22, 37, 0.85);
+  --bg-app: #201d2a;
+  --bg-sidebar: rgba(32, 29, 42, 0.88);
+  --bg-card: rgba(42, 37, 55, 0.82);
+  --bg-hover: rgba(178, 136, 208, 0.12);
+  --bg-active: rgba(178, 136, 208, 0.18);
+  --bg-input: rgba(42, 37, 55, 0.7);
+  --bg-overlay: rgba(32, 29, 42, 0.88);
 
-  --border-light: rgba(155, 123, 218, 0.15);
-  --border-normal: rgba(155, 123, 218, 0.25);
-  --border-focus: rgba(155, 123, 218, 0.5);
+  --border-light: rgba(178, 136, 208, 0.15);
+  --border-normal: rgba(178, 136, 208, 0.25);
+  --border-focus: rgba(178, 136, 208, 0.5);
 
-  --text-primary: #e8e0f0;
+  --text-primary: #e2dce8;
   --text-secondary: #a894be;
   --text-tertiary: #6e5d82;
-  --text-inverse: #1a1625;
+  --text-inverse: #201d2a;
 
-  --accent-light: rgba(155, 123, 218, 0.15);
-  --accent-hover: #b08ee8;
-
+  --accent: #c9a8e0;
+  --accent-light: rgba(178, 136, 208, 0.15);
+  --accent-hover: #d6bae8;
+  --accent-pink: #f2bdd0;
+  --accent-pink-light: rgba(240, 184, 202, 0.12);
   --success-light: rgba(107, 184, 154, 0.15);
   --warning-light: rgba(232, 168, 124, 0.15);
   --danger-light: rgba(232, 131, 138, 0.15);
 
-  --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.25);
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
 
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
 }
 
 /* ----- Reset & Base -------------------------------------------- */
@@ -172,7 +176,7 @@ body {
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-3);
   letter-spacing: -0.01em;
-  background: linear-gradient(135deg, var(--accent), #c4a8f0);
+  background: linear-gradient(135deg, var(--accent), var(--accent-pink));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -511,15 +515,15 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), #b08ee8);
+  background: linear-gradient(135deg, var(--accent), var(--accent-pink));
   color: var(--text-inverse);
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(155, 123, 218, 0.25);
+  box-shadow: 0 2px 8px rgba(178, 136, 208, 0.25);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--accent-hover), #c4a8f0);
-  box-shadow: 0 4px 12px rgba(155, 123, 218, 0.35);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent-pink));
+  box-shadow: 0 4px 12px rgba(178, 136, 208, 0.35);
   transform: translateY(-1px);
 }
 
@@ -1797,7 +1801,7 @@ body {
 .bar-row-fill {
   height: 100%;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--accent), #c4a8f0);
+  background: linear-gradient(90deg, var(--accent), var(--accent-pink));
   transition: width var(--transition-slow);
   min-width: 2px;
 }

@@ -353,7 +353,6 @@ class MemoryCore:
     async def _phase8_scheduler(self):
         """Phase 8: 调度器 + 指令处理器"""
         self.consolidation_manager = ConsolidationManager(
-            state_store=self.state_store,
             warm_processor=self.warm_processor,
             conversation_store=self.conversation_store,
             config=self.config,

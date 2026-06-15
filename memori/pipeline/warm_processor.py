@@ -192,16 +192,42 @@ class WarmProcessor(IWarmProcessor):
     # ── 流水线各步骤 ──
 
     async def _tag_conversation(self, cuid: str, text: str, sender_name: str = "") -> str:
-        """给对话文本附加用户显示名（内部 canonical uid 流转，给 LLM 前换为昵称）"""
-        if not text or text.startswith("["):
-            return text
-        display_name = sender_name or (
-            await self.capturer.atom_store.resolve_display_name(cuid)
-            if self.capturer and self.capturer.atom_store else ""
-        )
-        if not display_name:
-            display_name = f"用户{cuid[-4:]}" if len(cuid) >= 4 else "用户"
-        return f"[{display_name}]: {text}"
+        """给对话文本附加用户显示名（内部 canonical uid 流转，给 LLM 前换为昵称）
+
+        两层处理：
+        1. 纯文本 → 附加 [显示名]: 前缀
+        2. 已有 [时间] 前缀 → 扫描替换其中的 canonical UID（兜底防御）
+        """
+        if not text:
+            return ""
+
+        if not text.startswith("["):
+            display_name = sender_name or (
+                await self.capturer.atom_store.resolve_display_name(cuid)
+                if self.capturer and self.capturer.atom_store else ""
+            )
+            if not display_name:
+                display_name = f"用户{cuid[-4:]}" if len(cuid) >= 4 else "用户"
+            return f"[{display_name}]: {text}"
+
+        # 兜底防御：扫描已格式化文本中的 canonical UID，替换为显示名
+        if self.capturer and self.capturer.atom_store:
+            import re
+            uids = set(re.findall(r'u_[a-f0-9]{12}', text))
+            if uids:
+                resolved = {}
+                for uid in uids:
+                    name = await self.capturer.atom_store.resolve_display_name(uid)
+                    if name:
+                        resolved[uid] = name
+                if resolved:
+                    for uid, display_name in resolved.items():
+                        text = re.sub(
+                            rf'(\[[^\]]+\]\s*)' + re.escape(uid) + r'(\s*:)',
+                            rf'\1{display_name}\2',
+                            text,
+                        )
+        return text
 
     async def _judge(self, tagged_text: str):
         """Step 1: Judge — LLM 判断"""

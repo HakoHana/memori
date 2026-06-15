@@ -153,6 +153,29 @@ class Capturer(ICapturer):
             if len(atoms) >= 5:
                 break  # 限 5 条
 
+        # 2b. 算 embedding（如有 provider，供语义去重 + 入库持久化）
+        _emb_model = ""
+        if self.embed_provider and atoms:
+            try:
+                texts = [a.content[:512] for a in atoms if a.content]
+                if texts:
+                    embeddings = await self.embed_provider.embed_batch(texts)
+                    _emb_model = type(self.embed_provider).__name__
+                    for atom, emb in zip(atoms, embeddings):
+                        if emb:
+                            atom.embedding = emb
+            except Exception as e:
+                logger.warning(f"[Capturer] Embedding 计算失败（跳过语义去重）: {e}")
+
+        # 2c. 语义去重（Jieba → FTS 粗召回 → Jaccard 筛选 → 余弦精排）
+        if self.lifecycle and self.lifecycle.dedup and atoms and _emb_model:
+            try:
+                atoms = await self.lifecycle.dedup.semantic_dedup_new_atoms(
+                    atoms, diary_id, _emb_model, threshold=0.90,
+                )
+            except Exception as e:
+                logger.warning(f"[Capturer] 语义去重异常（跳过，继续入库）: {e}")
+
         if atoms:
             ids = await self._store.insert_atoms(atoms)
             for atom, aid in zip(atoms, ids):
@@ -162,6 +185,14 @@ class Capturer(ICapturer):
                     try:
                         await self._store.atom_store.link_atom_to_diary(
                             aid, diary_id, snippet=atom.diary_snippet, importance=atom.importance,
+                        )
+                    except Exception:
+                        pass
+                # 持久化 embedding（2b 已算好，写入内存，此处写库）
+                if getattr(atom, 'embedding', None) and atom.atom_id > 0:
+                    try:
+                        await self._store.update_embedding(
+                            atom.atom_id, atom.embedding, _emb_model,
                         )
                     except Exception:
                         pass
@@ -180,19 +211,6 @@ class Capturer(ICapturer):
                 )
                 task.add_done_callback(
                     lambda t: logger.warning(f"[Capturer] 图谱索引异常: {t.exception()}") if t.exception() else None
-                )
-            except Exception:
-                pass
-
-        # 4. 异步计算 embedding（fire-and-forget）
-        #    需要原子已落库且有 ID
-        if self.embed_provider and atoms:
-            try:
-                task = asyncio.ensure_future(
-                    self._compute_embeddings(atoms)
-                )
-                task.add_done_callback(
-                    lambda t: logger.warning(f"[Capturer] Embedding 异常: {t.exception()}") if t.exception() else None
                 )
             except Exception:
                 pass

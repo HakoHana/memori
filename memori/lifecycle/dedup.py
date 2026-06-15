@@ -15,9 +15,10 @@ from ..models.memory_atom import MemoryAtom, AtomStatus
 class DedupEngine:
     """去重强化引擎
 
-    双重防线：
-    1. jieba 词级 Jaccard 相似度（短文本降级为字符二元组）
-    2. 嵌入计算后余弦相似度（阈值 0.92）
+    三道防线：
+    1. jieba 词级 Jaccard 相似度（短文本降级为字符二元组） — 写入路径
+    2. Jieba → FTS 粗召回 → Jaccard 筛选 → 余弦精排      — 写入路径语义去重
+    3. Jieba → FTS 粗召回 → Jaccard 筛选 → 余弦精排      — 梦境定时扫描（低阈值兜底）
 
     强化策略：
     - 步长随强化次数递减（首次 +0.05，收敛到 0.01）
@@ -32,6 +33,26 @@ class DedupEngine:
         self.config = config or {}
         self._default_threshold = float(self.config.get("dedup_threshold", 0.6))
         self._semantic_threshold = float(self.config.get("semantic_threshold", 0.92))
+
+    # ── 工具：Jieba 分词（短文本降级为二元组） ────────────
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str] | None:
+        """Tokenize 文本 → jieba 词集，短文本降级为字符二元组
+
+        Returns None 表示无法 tokenize（空或过短）
+        """
+        if not text:
+            return None
+        words = set(w for w in jieba.lcut(text) if len(w) >= 2)
+        if words:
+            return words
+        # 短文本降级：字符二元组
+        chars = text.replace(" ", "")
+        if len(chars) < 4:
+            return None
+        bigrams = {chars[i:i + 2] for i in range(len(chars) - 1)}
+        return bigrams if len(bigrams) >= 2 else None
 
     # ── 第一道：jieba 词级 Jaccard ──────────────────────────
 
@@ -59,39 +80,17 @@ class DedupEngine:
         threshold = threshold if threshold is not None else self._default_threshold
 
         try:
-            # jieba 词级 token（去停用词：过滤单字词）
-            jieba_words = set(
-                w for w in jieba.lcut(content)
-                if len(w) >= 2
-            )
-            use_bigram_fallback = len(jieba_words) < 1
-
-            if use_bigram_fallback:
-                chars = content.replace(" ", "")
-                if len(chars) < 4:
-                    return False, None
-                tokens = {chars[i:i + 2] for i in range(len(chars) - 1)}
-                if len(tokens) < 2:
-                    return False, None
-            else:
-                tokens = jieba_words
+            tokens = self._tokenize(content)
+            if not tokens:
+                return False, None
 
             query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
             now = time.time()
 
             # 全局搜索：原子事实无用户边界，跨用户去重
-            existing = await self.atom_store.search_fts(query, user_id=None, k=5)
+            existing = await self.atom_store.search_fts(query, user_id=None, k=5, rank_only=True)
             for ex in existing:
-                if use_bigram_fallback:
-                    ex_chars = (ex.content or "").replace(" ", "")
-                    if len(ex_chars) < 4:
-                        continue
-                    ex_tokens = {ex_chars[i:i + 2] for i in range(len(ex_chars) - 1)}
-                else:
-                    ex_tokens = set(
-                        w for w in jieba.lcut(ex.content or "")
-                        if len(w) >= 2
-                    )
+                ex_tokens = self._tokenize(ex.content or "")
                 if not ex_tokens:
                     continue
                 union = len(tokens | ex_tokens)
@@ -208,91 +207,136 @@ class DedupEngine:
         except Exception:
             pass
 
-    # ── 第二道：语义去重（余弦相似度） ──────────────────────
+    # ── 第二道：写入路径语义去重（新原子 vs 库里已有原子） ───
 
-    async def semantic_dedup(
+    async def semantic_dedup_new_atoms(
         self,
         atoms: list[MemoryAtom],
+        diary_id: int,
         model_name: str,
-        threshold: float | None = None,
-    ):
-        """语义去重：检查新原子是否与已有原子语义重复
+        threshold: float = 0.90,
+        jaccard_threshold: float = 0.3,
+    ) -> list[MemoryAtom]:
+        """写入路径语义去重：新原子（已有内存 embedding）vs 库里已有原子
 
-        供 Capturer/Call 调用（单批新原子 vs 已有库）。
-        重复特征：余弦 > threshold → 标记新原子 dormant，强化旧原子。
+        Jieba → FTS 粗召回 → Jaccard 筛选候选 → 余弦精排
+
+        调用前：新原子必须已有 in-memory embedding（atom.embedding 非空）
+        调用后：重复原子已链接日记到旧原子，不会出现在返回值中
+
+        Args:
+            atoms: 已有内存 embedding 的新原子列表
+            diary_id: 当前日记 ID（用于链接）
+            model_name: embedding 模型名
+            threshold: 余弦相似度阈值（默认 0.90）
+            jaccard_threshold: Jaccard 粗筛阈值（默认 0.3）
+
+        Returns:
+            真正不重复的新原子列表（可安全入库）
         """
-        threshold = threshold if threshold is not None else self._semantic_threshold
+        if not atoms or not self.atom_store:
+            return atoms
+
+        atom_store = self.atom_store
+        filtered = []
 
         for atom in atoms:
-            if atom.atom_id <= 0 or not atom.embedding:
+            if not atom.embedding or not atom.content:
+                filtered.append(atom)
                 continue
 
             q_emb = atom.embedding
-            q_norm = sum(x * x for x in q_emb) ** 0.5
+            q_norm = math.sqrt(sum(x * x for x in q_emb))
             if q_norm < 1e-10:
+                filtered.append(atom)
                 continue
 
+            # 1. Jieba → FTS 粗召回（同用户，活跃）
+            tokens = self._tokenize(atom.content)
+            if not tokens:
+                filtered.append(atom)
+                continue
+
+            query = " OR ".join(f'"{t}"' for t in list(tokens)[:6])
             try:
-                rows = await self.atom_store.fetch(
-                    "SELECT id, embedding, importance FROM memory_atoms "
-                    "WHERE user_id=? AND status='active' AND embedding IS NOT NULL "
-                    "AND embedding_model=? AND id != ? "
-                    "ORDER BY importance DESC LIMIT 500",
-                    (atom.user_id, model_name, atom.atom_id),
+                candidates = await atom_store.search_fts(
+                    query, user_id=atom.user_id, rank_only=True,
                 )
             except Exception:
+                filtered.append(atom)
                 continue
 
-            for row in rows:
-                eid, e_blob, e_imp = row
-                if not e_blob:
-                    continue
-                try:
-                    stored = json.loads(e_blob.decode("utf-8"))
-                except Exception:
-                    continue
-                if not stored or len(stored) != len(q_emb):
+            # 2. Jaccard 粗筛 → 余弦精排
+            found = False
+            for cand in candidates:
+                if cand.atom_id == atom.atom_id or not cand.embedding:
                     continue
 
-                dot = sum(a * b for a, b in zip(q_emb, stored))
-                n_norm = sum(x * x for x in stored) ** 0.5
-                if n_norm < 1e-10:
+                # Jaccard 粗筛
+                cand_tokens = self._tokenize(cand.content or "")
+                if not cand_tokens:
                     continue
-                sim = dot / (q_norm * n_norm)
+                union = len(tokens | cand_tokens)
+                if union == 0:
+                    continue
+                jaccard = len(tokens & cand_tokens) / union
+                if jaccard < jaccard_threshold:
+                    continue
+
+                # 余弦精排
+                c_emb = cand.embedding
+                if len(c_emb) != len(q_emb):
+                    continue
+                c_norm = math.sqrt(sum(x * x for x in c_emb))
+                if c_norm < 1e-10:
+                    continue
+                sim = sum(a * b for a, b in zip(q_emb, c_emb)) / (q_norm * c_norm)
 
                 if sim > threshold:
-                    try:
-                        await self.atom_store.execute(
-                            "UPDATE memory_atoms SET status=? WHERE id=?",
-                            (AtomStatus.DORMANT.value, atom.atom_id),
-                        )
-                    except Exception:
-                        pass
-                    step = max(0.01, 0.05 / math.log2(max(e_imp or 0, 1) + 1))
-                    try:
-                        await self.atom_store.execute(
-                            "UPDATE memory_atoms SET importance=MIN(0.95, importance+?), "
-                            "access_count=access_count+1 WHERE id=?",
-                            (step, eid),
-                        )
-                    except Exception:
-                        pass
+                    # 重复 → 强化旧原子，链接日记，不插入新的
+                    await self._apply_reinforcement(
+                        cand, judge_importance=atom.importance,
+                        new_confidence=atom.confidence,
+                    )
+                    if diary_id > 0:
+                        try:
+                            await atom_store.link_atom_to_diary(
+                                cand.atom_id, diary_id,
+                                snippet=atom.diary_snippet,
+                                importance=atom.importance,
+                            )
+                        except Exception:
+                            pass
+                    found = True
                     break
+
+            if not found:
+                filtered.append(atom)
+
+        return filtered
+
+    # ── 第三道：梦境定时语义去重（全库扫描，低阈值兜底） ────
 
     async def scan_semantic_duplicates(
         self,
-        threshold: float | None = None,
-        max_per_user: int = 300,
+        threshold: float = 0.88,
+        jaccard_threshold: float = 0.3,
     ):
-        """全库扫描语义重复 — 供梦境/每日定时调用
+        """全库扫描语义重复 — 供梦境每日定时调用
 
-        逐用户扫描有 embedding 的活跃原子，按重要度排序，
-        依次两两比较余弦相似度，超阈值则标记后者为 dormant。
+        Jieba → FTS 粗召回 → Jaccard 筛选候选 → 余弦精排
 
-        状态机接入后，由此接口接入梦境状态机调度。
+        相比旧版本（O(n²) + range 100 bug）：
+        - FTS 定位候选，避免全量两两比较
+        - 不做范围截断，不遗漏低重要度原子
+
+        Args:
+            threshold: 余弦相似度阈值（默认 0.88，比写入时松）
+            jaccard_threshold: Jaccard 粗筛阈值（默认 0.3）
+
+        Returns:
+            标记为 dormant 的原子数量
         """
-        threshold = threshold if threshold is not None else self._semantic_threshold
-
         try:
             users = await self.atom_store.fetch(
                 "SELECT DISTINCT user_id FROM memory_atoms "
@@ -302,55 +346,107 @@ class DedupEngine:
             return 0
 
         total_marked = 0
+
         for (uid,) in users:
+            # 加载该用户所有有 embedding 的活跃原子（全量，不截断）
             try:
-                rows = await self.atom_store.fetch(
-                    "SELECT id, embedding, importance FROM memory_atoms "
-                    "WHERE user_id=? AND status='active' AND embedding IS NOT NULL "
-                    "ORDER BY importance DESC LIMIT ?",
-                    (uid, max_per_user),
-                )
+                rows = await self.atom_store.fetch("""
+                    SELECT id, content, embedding, importance FROM memory_atoms
+                    WHERE user_id=? AND status='active' AND embedding IS NOT NULL
+                    ORDER BY importance DESC
+                """, (uid,))
             except Exception:
                 continue
 
             if len(rows) < 2:
                 continue
 
-            items = []
+            # 构建查找索引
+            id_to_info: dict[int, dict] = {}
+            id_order: list[int] = []
             for row in rows:
-                eid, e_blob, e_imp = row
+                eid, content, e_blob, imp = row
                 if not e_blob:
                     continue
                 try:
                     emb = json.loads(e_blob.decode("utf-8"))
                 except Exception:
                     continue
-                items.append((eid, emb, e_imp))
-
-            for i in range(min(100, len(items))):
-                eid_a, emb_a, imp_a = items[i]
-                norm_a = sum(x * x for x in emb_a) ** 0.5
-                if norm_a < 1e-10:
+                if not emb:
                     continue
-                for j in range(i + 1, len(items)):
-                    eid_b, emb_b, imp_b = items[j]
-                    if len(emb_a) != len(emb_b):
+                norm = math.sqrt(sum(x * x for x in emb))
+                if norm < 1e-10:
+                    continue
+                tokens = self._tokenize(content or "")
+                id_to_info[eid] = {
+                    "emb": emb, "norm": norm, "imp": imp,
+                    "tokens": tokens,
+                }
+                id_order.append(eid)
+
+            if len(id_order) < 2:
+                continue
+
+            marked: set[int] = set()
+
+            for eid_a in id_order:
+                if eid_a in marked:
+                    continue
+
+                info_a = id_to_info[eid_a]
+                tokens_a = info_a["tokens"]
+                if not tokens_a:
+                    continue
+
+                # FTS 粗召回
+                query = " OR ".join(f'"{t}"' for t in list(tokens_a)[:6])
+                try:
+                    candidates = await self.atom_store.search_fts(
+                        query, user_id=uid, rank_only=True,
+                    )
+                except Exception:
+                    continue
+
+                for cand in candidates:
+                    eid_b = cand.atom_id
+                    if eid_b in marked or eid_b == eid_a:
                         continue
-                    norm_b = sum(x * x for x in emb_b) ** 0.5
-                    if norm_b < 1e-10:
+                    if eid_b not in id_to_info:
                         continue
-                    sim = sum(a * b for a, b in zip(emb_a, emb_b)) / (norm_a * norm_b)
+
+                    info_b = id_to_info[eid_b]
+
+                    # Jaccard 粗筛
+                    tokens_b = info_b["tokens"]
+                    if not tokens_b:
+                        continue
+                    union = len(tokens_a | tokens_b)
+                    if union == 0:
+                        continue
+                    jaccard = len(tokens_a & tokens_b) / union
+                    if jaccard < jaccard_threshold:
+                        continue
+
+                    # 余弦精排
+                    if len(info_a["emb"]) != len(info_b["emb"]):
+                        continue
+                    sim = sum(a * b for a, b in zip(info_a["emb"], info_b["emb"]))
+                    sim /= info_a["norm"] * info_b["norm"]
+
                     if sim > threshold:
+                        imp_a, imp_b = info_a["imp"], info_b["imp"]
                         if imp_a >= imp_b:
                             target_id, winner_id = eid_b, eid_a
                         else:
                             target_id, winner_id = eid_a, eid_b
+
                         try:
                             await self.atom_store.execute(
                                 "UPDATE memory_atoms SET status=? WHERE id=?",
                                 (AtomStatus.DORMANT.value, target_id),
                             )
                             total_marked += 1
+                            marked.add(target_id)
                             step = max(0.01, 0.05 / math.log2(max(max(imp_a, imp_b), 1) + 1))
                             await self.atom_store.execute(
                                 "UPDATE memory_atoms SET importance=MIN(0.95, importance+?), "
@@ -359,7 +455,8 @@ class DedupEngine:
                             )
                         except Exception:
                             pass
-                        break
+                        break  # 找到一条重复就退出内循环
+
         return total_marked
     # ── 批量增强：给多个原子调权重（供 warm_processor 提前去重返回后用） ──
     # （不额外新增，父调用直接走 dedup_and_reinforce 即可）

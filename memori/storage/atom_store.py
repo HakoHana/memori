@@ -6,6 +6,8 @@ import json
 import time
 from typing import Any
 
+import jieba
+
 from ..models.memory_atom import MemoryAtom, AtomType, AtomStatus, DecayType
 from ..core.adapters import MemoryStore
 from ..core.logger import logger
@@ -25,6 +27,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
 _INSERT_FTS_SQL = """\
 INSERT INTO memory_atoms_fts (atom_id, content, user_id) VALUES (?, ?, ?)\
 """
+
+
+def _tokenize_for_fts(text: str) -> str:
+    """Jieba 分词 → 空格分隔，供 FTS5 全文索引
+
+    unicode61 tokenizer 不识别 CJK→ASCII 边界，导致混合文本被合并为一个 token。
+    应用层用 jieba 预分词后再存入 FTS，查询端用同样的 jieba 分词构造 query。
+    """
+    if not text:
+        return ""
+    tokens = [w for w in jieba.lcut(text) if len(w) >= 2 and w.strip()]
+    if not tokens:
+        # 短文本降级：字符二元组
+        chars = text.replace(" ", "")
+        tokens = [chars[i:i + 2] for i in range(len(chars) - 1) if len(chars[i:i + 2]) >= 2]
+    return " ".join(tokens)
 
 
 class AtomStore(BaseDbStore, MemoryStore):
@@ -158,12 +176,13 @@ class AtomStore(BaseDbStore, MemoryStore):
 
     async def insert(self, atom: MemoryAtom) -> int:
         """插入单条原子，返回 ID"""
+        fts_content = _tokenize_for_fts(atom.content)
         async with self._connect() as db:
             cursor = await db.execute(_INSERT_SQL, self._atom_values(atom))
             atom_id = cursor.lastrowid
             await db.execute(
                 _INSERT_FTS_SQL,
-                (atom_id, atom.content, atom.user_id),
+                (atom_id, fts_content, atom.user_id),
             )
             await db.commit()
             return atom_id
@@ -180,7 +199,7 @@ class AtomStore(BaseDbStore, MemoryStore):
                 aid = c.lastrowid
                 ids.append(aid)
                 await db.execute(
-                    _INSERT_FTS_SQL, (aid, atom.content, atom.user_id),
+                    _INSERT_FTS_SQL, (aid, _tokenize_for_fts(atom.content), atom.user_id),
                 )
             await db.commit()
 
@@ -195,29 +214,38 @@ class AtomStore(BaseDbStore, MemoryStore):
 
     async def search_fts(self, query: str, user_id: str | None = None, k: int = 5,
                           imp_weight: float = 0.6, rank_weight: float = 0.4,
-                          extra_user_ids: list[str] | None = None) -> list[MemoryAtom]:
-        """FTS5 全文搜索（按重要度 × BM25 排序）
+                          extra_user_ids: list[str] | None = None,
+                          rank_only: bool = False) -> list[MemoryAtom]:
+        """FTS5 全文搜索
+
+        rank_only=True 去重场景用：不限数量、不重排，直接按 BM25 返回。
+        去重关注的是内容相似性，不是重要性。
 
         Args:
-            user_id: 用户 ID，None 表示搜索所有用户（全局去重用）
-            extra_user_ids: 额外搜索的用户 ID，用于搜索关联身份的记忆
+            query: FTS5 合法查询表达式
+            user_id: 用户 ID，None = 搜索所有用户
+            k: 返回 top N（仅 rank_only=False 时生效）
+            imp_weight: 重要度权重
+            rank_weight: BM25 排名权重
+            extra_user_ids: 额外搜索的用户 ID
+            rank_only: True = 不限数量，仅按 BM25 排名返回
         """
-        safe_query = self._sanitize_fts_query(query)
-        if not safe_query:
+        if not query or not query.strip():
             return []
 
-        # 构建用户 ID 条件
+        safe_query = query.strip()
+        max_candidates = 500  # 去重时上限
+
         if user_id is None:
-            # 全局搜索（不按用户过滤）
-            candidates = k * 3
-            sql = """
+            limit_clause = "" if rank_only else f"LIMIT {k * 3}"
+            sql = f"""
                 SELECT a.*, rank FROM memory_atoms a
                 JOIN memory_atoms_fts f ON a.id = f.atom_id
                 WHERE memory_atoms_fts MATCH ? AND a.status = 'active'
                 ORDER BY rank
-                LIMIT ?
+                {limit_clause}
             """
-            rows = await self.fetch(sql, (safe_query, candidates))
+            rows = await self.fetch(sql, (safe_query,))
         else:
             all_uids = [user_id]
             if extra_user_ids:
@@ -225,30 +253,34 @@ class AtomStore(BaseDbStore, MemoryStore):
                     if eid and eid != user_id and eid not in all_uids:
                         all_uids.append(eid)
             placeholders = ",".join("?" for _ in all_uids)
-            candidates = k * 3
+            limit_clause = "" if rank_only else f"LIMIT {k * 3}"
             sql = f"""
                 SELECT a.*, rank FROM memory_atoms a
                 JOIN memory_atoms_fts f ON a.id = f.atom_id
                 WHERE memory_atoms_fts MATCH ? AND a.user_id IN ({placeholders}) AND a.status = 'active'
                 ORDER BY rank
-                LIMIT ?
+                {limit_clause}
             """
-            rows = await self.fetch(sql, (safe_query, *all_uids, candidates))
+            rows = await self.fetch(sql, (safe_query, *all_uids))
 
         if not rows:
             return []
 
-        # 按 (importance × 0.6 + rank_normalized × 0.4) 排序
-        # rank 是负值（越接近0越匹配），归一化到 0~1
-        max_rank = abs(rows[-1][-1]) if rows else 1  # 最差匹配的绝对值
+        # rank_only：去重场景，内容匹配度优先，不做重要度重排
+        if rank_only:
+            atoms = [self._row_to_atom(r) for r in rows]
+            return atoms[:max_candidates]
+
+        # 默认召回层：重要度 × BM25 综合排序
+        max_rank = abs(rows[-1][-1]) if rows else 1
         if max_rank < 0.001:
             max_rank = 1
 
         scored = []
         for r in rows:
             atom = self._row_to_atom(r)
-            rank_val = abs(r[-1])  # 最后一列是 rank
-            rank_norm = 1.0 - min(1.0, rank_val / max_rank)  # 0~1，越高越匹配
+            rank_val = abs(r[-1])
+            rank_norm = 1.0 - min(1.0, rank_val / max_rank)
             score = atom.importance * imp_weight + rank_norm * rank_weight
             scored.append((score, atom))
 
@@ -751,8 +783,9 @@ class AtomStore(BaseDbStore, MemoryStore):
     COLUMNS = (
         "id", "user_id", "diary_date", "atom_type", "content", "entities",
         "importance", "confidence", "access_count", "created_at", "last_accessed_at",
-        "ttl_days", "expires_at", "decay_type", "status", "session_id", "diary_ref",
-        "diary_snippet", "embedding", "embedding_model", "metadata", "diary_id",
+        "ttl_days", "status", "session_id", "diary_ref",
+        "embedding", "embedding_model", "metadata", "diary_snippet",
+        "expires_at", "decay_type", "diary_id",
     )
 
     def _row_to_atom(self, row) -> MemoryAtom:
@@ -796,17 +829,6 @@ class AtomStore(BaseDbStore, MemoryStore):
             json.dumps(atom.metadata, ensure_ascii=False),
             atom.diary_id,
         )
-
-    def _sanitize_fts_query(self, query: str) -> str:
-        """清理 FTS5 查询字符串"""
-        if not query or not query.strip():
-            return ""
-        import re
-        cleaned = re.sub(r'[^\w一-鿿]', ' ', query).strip()
-        if not cleaned:
-            return ""
-        terms = cleaned.split()
-        return ' AND '.join(f'"{t}"*' for t in terms if t)
 
     def _parse_decay_type(self, raw):
         if not raw:

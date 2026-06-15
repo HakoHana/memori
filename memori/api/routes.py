@@ -445,6 +445,8 @@ _CONFIG_META = {
                            "hint": "同一用户两次整理最短间隔，防刷屏重复触发"},
     "scan_interval_minutes": {"type": "int", "default": 120, "label": "定时扫描(分钟)", "group": "整理",
                                "hint": "不管用户是否活跃，距上次整理超过此时间则扫描积压内容"},
+    "periodic_scan_enabled": {"type": "bool", "default": True, "label": "启用定时扫描", "group": "整理",
+                               "hint": "关闭后只有轮数触发和空闲超时两种整理方式"},
     "max_l1_retries": {"type": "int", "default": 3, "label": "LLM 调用重试次数", "group": "整理",
                        "hint": "写日记/提取原子时 LLM 调用失败的重试次数"},
     "persona_update_interval": {"type": "int", "default": 10, "label": "画像更新间隔(日记数)", "group": "整理",

@@ -160,22 +160,17 @@ class PageService:
             return self._error(str(e))
 
     async def _delete_single_diary(self, diary_id: int) -> int:
-        """删除单条日记及其独占原子"""
-        exclusive = await self._db.fetch("""
-            SELECT ma.id FROM memory_atoms ma
-            JOIN atoms_diary_links d ON ma.id = d.atom_id
-            WHERE d.diary_id=? AND ma.status='active'
-            AND (SELECT COUNT(*) FROM atoms_diary_links sub
-                 WHERE sub.atom_id=ma.id AND sub.diary_id!=?) = 0
-        """, (diary_id, diary_id))
-        eids = [r[0] for r in exclusive]
-        if eids:
-            ph = ",".join("?" * len(eids))
-            await self._db.execute(
-                f"UPDATE memory_atoms SET status='forgotten' WHERE id IN ({ph})", eids
-            )
+        """删除单条日记，清理桥表关联
+
+        只做两件事：
+        1. 删桥表关联行（atoms_diary_links）
+        2. 删日记条目（diary_entries）
+
+        孤立原子的遗忘由生命周期管理器统一处理，不在此处做。
+        """
+        await self._db.execute("DELETE FROM atoms_diary_links WHERE diary_id=?", (diary_id,))
         await self._db_diary.execute("DELETE FROM diary_entries WHERE id=?", (diary_id,))
-        return len(eids)
+        return 0
 
     async def delete_memory(self, entry_id: int) -> dict:
         """删除日记"""

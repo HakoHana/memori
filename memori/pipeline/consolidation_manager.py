@@ -140,9 +140,17 @@ class ConsolidationManager(IConsolidationManager):
             meta["diary_count_since_persona"] = state.diary_count_since_persona
             meta["last_diary_date"] = state.last_diary_date
 
+            meta_json = json.dumps(meta, ensure_ascii=False)
+
+            # 确保 session 行存在（add_message 创建前也可能被保存）
+            await self.conversation_store.execute(
+                "INSERT OR IGNORE INTO sessions(session_id, user_id, created_at, last_active_at) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, session_id, time.time(), time.time()),
+            )
             await self.conversation_store.execute(
                 "UPDATE sessions SET metadata = ? WHERE session_id = ?",
-                (json.dumps(meta, ensure_ascii=False), session_id),
+                (meta_json, session_id),
             )
         except Exception as e:
             logger.warning(f"[Memory] 保存 session 元数据失败: {e}")
@@ -258,11 +266,11 @@ class ConsolidationManager(IConsolidationManager):
             except Exception as e:
                 logger.warning(f"[Memory] 更新滑窗位置失败: {e}")
 
+        # 先落盘，再放锁 — 防止重载时 state 丢失导致滑窗回退
+        await self._save_state_to_metadata(session_id, state)
+
         # 释放 inflight 锁，允许该 session 再次触发整理
         self._inflight_sessions.discard(session_id)
-
-        # 立即写回 sessions.metadata（不延迟）
-        await self._save_state_to_metadata(session_id, state)
 
     # ═══════════════════════════════════════════════════
     #  B. 空闲超时兜底（session 级别）
@@ -300,6 +308,11 @@ class ConsolidationManager(IConsolidationManager):
 
                     conv_text = await self._get_conversation_context(session_id)
                     if not conv_text:
+                        continue
+
+                    # await 期间可能已有其他 trigger 入队，重新检查互斥锁
+                    if session_id in self._inflight_sessions:
+                        logger.debug(f"[Memory] {session_id} 空闲触发: await 后检查到 inflight，跳过")
                         continue
 
                     async def _done_cb(_uid, result, _sid=session_id):
@@ -357,6 +370,11 @@ class ConsolidationManager(IConsolidationManager):
 
                     conv_text = await self._get_conversation_context(session_id)
                     if not conv_text:
+                        continue
+
+                    # await 期间可能已有其他 trigger 入队，重新检查互斥锁
+                    if session_id in self._inflight_sessions:
+                        logger.debug(f"[Memory] {session_id} 定时扫描: await 后检查到 inflight，跳过")
                         continue
 
                     async def _done_cb(_uid, result, _sid=session_id):

@@ -213,6 +213,15 @@ async def delete_memory(memory_id: int, core: MemoryCore = Depends(get_core)):
     return {"ok": result.get("ok", True), "cleaned_atoms": result.get("data", {}).get("cleaned_atoms", 0)}
 
 
+@router.post("/v1/diaries/batch-delete")
+async def batch_delete_diaries(body: BatchDeleteRequest, core: MemoryCore = Depends(get_core)):
+    """批量删除日记"""
+    from ..utils.page_service import PageService
+    svc = PageService(core)
+    result = await svc.batch_delete_memories(body.ids)
+    return {"ok": result.get("ok", True), "data": result.get("data", {})}
+
+
 # ═══════════════════════════════════════════════════════════
 #  日记
 # ═══════════════════════════════════════════════════════════

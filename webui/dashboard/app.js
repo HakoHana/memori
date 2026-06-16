@@ -70,12 +70,15 @@
       if (!delResp.ok) throw new Error("HTTP " + delResp.status);
       return await delResp.json();
     }
-    // 批量删除
+    // 批量删除 → POST /v1/diaries/batch-delete
     if ((base === "memories/batch-delete") && body && body.ids) {
-      for (var i = 0; i < body.ids.length; i++) {
-        await apiRequest("memories/delete", { method: "POST", body: { id: body.ids[i] } });
-      }
-      return { ok: true };
+      var resp = await fetch(API_BASE + "/diaries/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: body.ids }),
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      return await resp.json();
     }
     // 特殊处理：memories/update → PUT /memories/{id} 并转换 field/value 格式
     if ((base === "memories/update") && body && body.memory_id) {
@@ -1088,8 +1091,14 @@
           return '<span class="mem-card-tag type-' + tc + '">' + esc(t.type) + '</span>';
         }).join(" ");
       }
-      html += '<div class="mem-card" data-key="' + key + '">' +
+      var checked = sel ? ' checked' : '';
+      var selAttr = sel ? ' data-selected' : '';
+      html += '<div class="mem-card' + (sel ? ' selected' : '') + '" data-key="' + key + '"' + selAttr + '>' +
         '<div class="mem-card-importance ' + impCls + '"></div>' +
+        '<label class="mem-card-sel">' +
+        '<input type="checkbox"' + checked + '>' +
+        '<span class="mem-card-sel-knob"></span>' +
+        '</label>' +
         '<div class="mem-card-body">' +
         '<div class="mem-card-top">' +
         '<div class="mem-card-summary">' + esc(item.summary || item.content || "") + '</div>' +
@@ -1107,9 +1116,27 @@
     }
     list.innerHTML = html;
 
-    // 点击卡片 → 显示详情
+    // 勾选框 → 切换选中状态（不触发 peek）
+    list.querySelectorAll(".mem-card-sel").forEach(function(label) {
+      label.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var cb = this.querySelector("input[type=checkbox]");
+        var card = this.closest(".mem-card");
+        if (!cb || !card) return;
+        var key = card.dataset.key;
+        if (cb.checked) {
+          state.memory.selected.add(key);
+        } else {
+          state.memory.selected.delete(key);
+        }
+        card.classList.toggle("selected", cb.checked);
+        updateBatchBar();
+      });
+    });
+    // 点击卡片 → 显示详情（跳过勾选框区域）
     list.querySelectorAll(".mem-card").forEach(function(card) {
-      card.addEventListener("click", function() {
+      card.addEventListener("click", function(e) {
+        if (e.target.closest(".mem-card-sel")) return;
         var item = getMemoryItemByKey(this.dataset.key);
         if (item) renderPeekMemory(item);
       });

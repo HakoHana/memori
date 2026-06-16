@@ -2159,6 +2159,74 @@ body {
   transform: translateY(0);
 }
 
+/* ── 多选勾选框 ── */
+.mem-card-sel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  border-radius: 50%;
+}
+
+.mem-card:hover .mem-card-sel,
+.mem-card.selected .mem-card-sel {
+  opacity: 1;
+}
+
+.mem-card-sel input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.mem-card-sel-knob {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--text-tertiary);
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(4px);
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.mem-card-sel-knob::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.mem-card-sel input:checked + .mem-card-sel-knob {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.mem-card-sel input:checked + .mem-card-sel-knob::after {
+  background: var(--text-inverse);
+}
+
+.mem-card.selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent-light), var(--shadow-sm);
+}
+
+.mem-card.selected .mem-card-importance {
+  background: var(--accent) !important;
+}
+
 [data-theme="dark"] .mem-card {
   background: linear-gradient(135deg, rgba(50, 45, 65, 0.9), rgba(45, 40, 58, 0.88));
   border-color: rgba(201, 168, 224, 0.12);

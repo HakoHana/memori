@@ -78,6 +78,10 @@ class DiaryUpdateRequest(BaseModel):
     content: str
 
 
+class BatchDeleteRequest(BaseModel):
+    ids: list[int]
+
+
 # ═══════════════════════════════════════════════════════════
 #  图谱
 # ═══════════════════════════════════════════════════════════

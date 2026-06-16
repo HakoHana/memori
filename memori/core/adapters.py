@@ -159,6 +159,14 @@ class EmbeddingProvider(ABC):
         """向量维度"""
         ...
 
+    async def close(self):
+        """释放底层资源（可选实现，默认 no-op）
+
+        在 MemoryCore.destroy() 中调用，
+        必须先于后台任务的取消，避免正在进行的请求被打断。
+        """
+        pass
+
     def set_provider(self, provider_id: str | None) -> None:
         """切换后端（可选实现，默认 no-op）"""
         pass

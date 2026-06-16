@@ -752,11 +752,24 @@ class MemoryCore:
 
     async def destroy(self):
         """优雅关闭 — 停后台任务"""
-        # 1) 停后台任务
+        # 1) 停后台任务（停止接收新工作，不立即取消正在执行的任务）
         if self.warm_processor:
             await self.warm_processor.stop()
         if self.consolidation_manager:
             await self.consolidation_manager.destroy()
+        # 2) 释放嵌入模型资源（必须在取消任务之前，避免任务持有模型句柄时被中断）
+        if self.embed_provider:
+            try:
+                await self.embed_provider.close()
+            except Exception as e:
+                logger.warning(f"[Memoria] 关闭嵌入提供者异常: {e}")
+            self.embed_provider = None
+        # 同步清除下游引用
+        if hasattr(self, "capturer") and self.capturer:
+            self.capturer.embed_provider = None
+        if hasattr(self, "lifecycle") and self.lifecycle:
+            self.lifecycle.embed_provider = None
+        # 3) 取消所有后台任务
         for task in list(self._background_tasks):
             if not task.done():
                 task.cancel()

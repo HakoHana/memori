@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import httpx
 
@@ -41,11 +42,26 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._model = None
         self._dim = None
         self._loaded = False
+        self._load_error: str | None = None
+        self._last_retry_time: float = 0
 
     async def ensure_loaded(self):
-        """异步初始化模型（首次调用 embed 时自动调用，也可手动预加载）"""
+        """异步初始化模型（首次调用 embed 时自动调用，也可手动预加载）
+
+        加载策略：
+          1. 先尝试 local_files_only=True（零网络，适用于模型已缓存）
+          2. 失败后 fallback 到不限模式（允许从 HF Hub 下载）
+          3. 加载失败后记录错误，冷却 60 秒再重试
+        """
         if self._loaded:
             return
+
+        # 冷却期内不再重试
+        if self._load_error and (time.time() - self._last_retry_time) < 60:
+            raise RuntimeError(
+                f"嵌入模型上次加载失败（60 秒冷却期）: {self._load_error}"
+            )
+
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError:
@@ -56,11 +72,41 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         import asyncio
 
         loop = asyncio.get_event_loop()
-        self._model = await loop.run_in_executor(
-            None, lambda: SentenceTransformer(self._model_name)
-        )
-        self._dim = self._model.get_embedding_dimension()
-        self._loaded = True
+
+        # 第一步：只读本地缓存，零网络
+        first_err = None
+        try:
+            self._model = await loop.run_in_executor(
+                None,
+                lambda: SentenceTransformer(self._model_name, local_files_only=True),
+            )
+        except Exception as e:
+            first_err = e
+
+        # 第二步：缓存未命中，允许联网下载
+        if first_err is not None:
+            try:
+                self._model = await loop.run_in_executor(
+                    None,
+                    lambda: SentenceTransformer(self._model_name),
+                )
+            except Exception as e:
+                self._load_error = str(e)
+                self._last_retry_time = time.time()
+                self._model = None
+                raise RuntimeError(
+                    f"嵌入模型加载失败（本地缓存 + 联网均不可用）: {e}"
+                ) from e
+
+        try:
+            self._dim = self._model.get_embedding_dimension()
+            self._loaded = True
+            self._load_error = None
+        except Exception as e:
+            self._model = None
+            self._load_error = str(e)
+            self._last_retry_time = time.time()
+            raise
 
     async def embed(self, text: str) -> list[float]:
         await self.ensure_loaded()
@@ -82,6 +128,15 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     def model_name(self) -> str:
         return self._model_name
 
+    async def close(self):
+        """释放模型资源"""
+        self._model = None
+        self._dim = None
+        self._loaded = False
+        self._load_error = None
+        self._last_retry_time = 0
+        logger.info("[LocalEmbedding] 模型资源已释放")
+
 
 # ═══════════════════════════════════════════════════════════
 #  Ollama API（零额外依赖）
@@ -101,35 +156,35 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         self._api_base = api_base.rstrip("/")
         self._model = model
         self._dim = None
+        self._client = httpx.AsyncClient(timeout=60)
 
     async def _ensure_dim(self):
         """发一条短文本探测向量维度"""
         if self._dim is not None:
             return
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self._api_base}/api/embeddings",
-                    json={"model": self._model, "prompt": "."},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                emb = data.get("embedding", [])
-                self._dim = len(emb) if emb else 0
+            resp = await self._client.post(
+                f"{self._api_base}/api/embeddings",
+                json={"model": self._model, "prompt": "."},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            emb = data.get("embedding", [])
+            self._dim = len(emb) if emb else 0
         except Exception as e:
             logger.warning(f"[OllamaEmbedding] 维度探测失败: {e}")
             self._dim = 0
 
     async def embed(self, text: str) -> list[float]:
         await self._ensure_dim()
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{self._api_base}/api/embeddings",
-                json={"model": self._model, "prompt": text},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("embedding", [])
+        resp = await self._client.post(
+            f"{self._api_base}/api/embeddings",
+            json={"model": self._model, "prompt": text},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("embedding", [])
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -139,6 +194,13 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         for t in texts:
             results.append(await self.embed(t))
         return results
+
+    async def close(self):
+        """释放持久 httpx 客户端"""
+        try:
+            await self._client.aclose()
+        except Exception as e:
+            logger.warning(f"[OllamaEmbedding] 关闭客户端异常: {e}")
 
     @property
     def dimension(self) -> int:
@@ -175,56 +237,62 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
         self._api_key = api_key
         self._model = model
         self._dim = None
+        self._client = httpx.AsyncClient(timeout=120)
 
     async def _ensure_dim(self):
         """发一条短文本探测向量维度"""
         if self._dim is not None:
             return
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self._api_base}/embeddings",
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={"model": self._model, "input": "."},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                emb = data.get("data", [{}])[0].get("embedding", [])
-                self._dim = len(emb) if emb else 0
+            resp = await self._client.post(
+                f"{self._api_base}/embeddings",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={"model": self._model, "input": "."},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            emb = data.get("data", [{}])[0].get("embedding", [])
+            self._dim = len(emb) if emb else 0
         except Exception as e:
             logger.warning(f"[RemoteEmbedding] 维度探测失败: {e}")
             self._dim = 0
 
     async def embed(self, text: str) -> list[float]:
         await self._ensure_dim()
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{self._api_base}/embeddings",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={"model": self._model, "input": text},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("data", [{}])[0].get("embedding", [])
+        resp = await self._client.post(
+            f"{self._api_base}/embeddings",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={"model": self._model, "input": text},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("data", [{}])[0].get("embedding", [])
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{self._api_base}/embeddings",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={"model": self._model, "input": texts},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # 按输入顺序排列
-            results = [{}] * len(texts)
-            for item in data.get("data", []):
-                idx = item.get("index", 0)
-                if 0 <= idx < len(texts):
-                    results[idx] = item.get("embedding", [])
-            return results
+        resp = await self._client.post(
+            f"{self._api_base}/embeddings",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={"model": self._model, "input": texts},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # 按输入顺序排列
+        results = [{}] * len(texts)
+        for item in data.get("data", []):
+            idx = item.get("index", 0)
+            if 0 <= idx < len(texts):
+                results[idx] = item.get("embedding", [])
+        return results
+
+    async def close(self):
+        """释放持久 httpx 客户端"""
+        try:
+            await self._client.aclose()
+        except Exception as e:
+            logger.warning(f"[RemoteEmbedding] 关闭客户端异常: {e}")
 
     @property
     def dimension(self) -> int:

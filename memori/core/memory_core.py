@@ -14,7 +14,6 @@ from ..models.memory_atom import CaptureResult
 from ..storage.atom_store import AtomStore
 from ..storage.diary_store import DiaryStore
 from ..storage.persona_store import PersonaStore
-from ..storage.state_store import StateStore
 from ..storage.conversation_store import ConversationStore
 from ..storage.write_op_log import WriteOpLog
 from ..storage.graph_store import GraphStore
@@ -57,7 +56,6 @@ class MemoryCoreOptions:
     atom_store: AtomStore | None = None
     diary_store: DiaryStore | None = None
     persona_store: PersonaStore | None = None
-    state_store: StateStore | None = None
     graph_store: GraphStore | None = None
     conversation_store: ConversationStore | None = None
     write_op_log: WriteOpLog | None = None
@@ -85,7 +83,6 @@ class MemoryCore:
         atom_store: AtomStore | None = None,
         diary_store: DiaryStore | None = None,
         persona_store: PersonaStore | None = None,
-        state_store: StateStore | None = None,
         graph_store: GraphStore | None = None,
         conversation_store: ConversationStore | None = None,
         write_op_log: WriteOpLog | None = None,
@@ -102,7 +99,6 @@ class MemoryCore:
             "atom_store": opts.atom_store or atom_store,
             "diary_store": opts.diary_store or diary_store,
             "persona_store": opts.persona_store or persona_store,
-            "state_store": opts.state_store or state_store,
             "graph_store": opts.graph_store or graph_store,
             "conversation_store": opts.conversation_store or conversation_store,
             "write_op_log": opts.write_op_log or write_op_log,
@@ -120,7 +116,6 @@ class MemoryCore:
         self.atom_store: AtomStore | None = None
         self.diary_store: DiaryStore | None = None
         self.persona_store: PersonaStore | None = None
-        self.state_store: StateStore | None = None
         self.capturer: ICapturer | None = None
         self.persona_engine: IPersonaEngine | None = None
         self.retriever: IRetriever | None = None
@@ -146,7 +141,6 @@ class MemoryCore:
         self._diaries_db = str(self.data_dir / "diaries.db")
         self._conversations_db = str(self.data_dir / "conversations.db")
         self._graph_db = str(self.data_dir / "graph.db")
-        self._state_db = str(self.data_dir / "state.db")
 
         await self._phase1_core_deps()
         await self._phase2_db_migration()
@@ -176,7 +170,6 @@ class MemoryCore:
             (self._diaries_db, "diaries"),
             (self._conversations_db, "conversations"),
             (self._graph_db, "graph"),
-            (self._state_db, "state"),
         ]:
             try:
                 migration = DBMigration(path, scope=scope)
@@ -192,7 +185,6 @@ class MemoryCore:
         self.atom_store = inj["atom_store"] or AtomStore(self._db_path)
         self.diary_store = inj["diary_store"] or DiaryStore(self._diaries_db)
         self.persona_store = inj["persona_store"] or PersonaStore(str(self.data_dir))
-        self.state_store = inj["state_store"] or StateStore(self._state_db)
         self.graph_store = inj["graph_store"] or GraphStore(self._graph_db)
         self.conversation_store = inj["conversation_store"] or ConversationStore(self._conversations_db)
         self.write_op_log = inj["write_op_log"] or WriteOpLog(self._db_path)
@@ -200,13 +192,12 @@ class MemoryCore:
         results = await asyncio.gather(
             self.atom_store.initialize(),
             self.diary_store.initialize(),
-            self.state_store.initialize(),
             self.graph_store.initialize(),
             self.conversation_store.initialize(),
             self.write_op_log.initialize(),
             return_exceptions=True,
         )
-        names = ["atom_store", "diary_store", "state_store", "graph_store", "conversation_store", "write_op_log"]
+        names = ["atom_store", "diary_store", "graph_store", "conversation_store", "write_op_log"]
         for name, result in zip(names, results):
             if isinstance(result, Exception):
                 logger.warning(f"[Memoria] {name} 初始化异常: {result}")
@@ -353,8 +344,8 @@ class MemoryCore:
     async def _phase8_scheduler(self):
         """Phase 8: 调度器 + 指令处理器"""
         self.consolidation_manager = ConsolidationManager(
-            warm_processor=self.warm_processor,
             conversation_store=self.conversation_store,
+            warm_processor=self.warm_processor,
             config=self.config,
         )
         await self.consolidation_manager.initialize()
@@ -449,9 +440,6 @@ class MemoryCore:
                  None),
                 ("messages", self.conversation_store,
                  str(self.data_dir / "conversations.db"),
-                 None),
-                ("consolidation_state", self.state_store,
-                 str(self.data_dir / "state.db"),
                  None),
             ]:
                 if not dest_store:

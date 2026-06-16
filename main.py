@@ -287,9 +287,12 @@ class MemoriPlugin(Star):
                 except Exception:
                     pass
 
-            # 3. 更新活动时间（供空闲超时使用）
+            # 2. 更新活动时间（供空闲超时使用）
             task = asyncio.ensure_future(
-                self.core.consolidation_manager.on_message(cuid, txt, display_name)
+                self.core.consolidation_manager.on_message(
+                    cuid, txt, display_name,
+                    session_id=event.unified_msg_origin,
+                )
             )
             self.core._background_tasks.add(task)
             task.add_done_callback(self.core._background_tasks.discard)

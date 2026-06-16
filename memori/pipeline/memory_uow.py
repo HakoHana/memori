@@ -100,3 +100,8 @@ class MemoryUnitOfWork:
         """完成操作日志"""
         if op_id and self._log:
             await self._log.complete(op_id)
+
+    async def fail_op(self, op_id: str | None, error: str):
+        """标记操作失败"""
+        if op_id and self._log:
+            await self._log.fail(op_id, error)

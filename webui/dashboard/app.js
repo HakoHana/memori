@@ -964,8 +964,10 @@
       state.memory.selected.clear();
 
       state.memory.items = (Array.isArray(data.items) ? data.items : []).map(function(item) {
-        var ts = item.updated_at || item.created_at;
-        var tsStr = ts ? new Date(ts * 1000).toLocaleString() : "--";
+        var createdRaw = item.created_at;
+        var updatedRaw = item.updated_at || item.created_at;
+        var updatedStr = updatedRaw ? new Date(updatedRaw * 1000).toLocaleString() : "--";
+        var createdStr = createdRaw ? new Date(createdRaw * 1000).toLocaleString() : "--";
         var typeStr = "";
         if (item.types && item.types.length) {
           typeStr = item.types.map(function(t) { return '<span class="type-dot">' + t.type + '(' + t.count + ')</span>'; }).join(" ");
@@ -979,8 +981,8 @@
           memory_type: typeStr,
           importance: item.avg_importance != null ? Math.round(item.avg_importance * 10 * 10) / 10 : 5,
           status: item.status || "active",
-          created_at: tsStr,
-          updated_at: tsStr,
+          created_at: createdStr,
+          updated_at: updatedStr,
           atom_count: item.atom_count || 0,
         };
       });
@@ -1077,7 +1079,7 @@
       var imp = item.importance != null ? Number(item.importance).toFixed(1) : "5.0";
       var impNum = Math.min(10, Math.max(0, parseFloat(imp) || 0));
       var impCls = impNum >= 7 ? "high" : impNum >= 4 ? "medium" : "low";
-      var dateStr = item.created_at || "";
+      var dateStr = item.updated_at;
       // 提取类型标签
       var typeTags = "";
       if (item.types && item.types.length) {
@@ -1088,12 +1090,18 @@
       }
       html += '<div class="mem-card" data-key="' + key + '">' +
         '<div class="mem-card-importance ' + impCls + '"></div>' +
+        '<div class="mem-card-body">' +
         '<div class="mem-card-top">' +
         '<div class="mem-card-summary">' + esc(item.summary || item.content || "") + '</div>' +
         '</div>' +
         '<div class="mem-card-bottom">' +
         '<span class="mem-card-date">' + esc(dateStr) + '</span>' +
         '<div class="mem-card-tags">' + typeTags + '</div>' +
+        '</div>' +
+        '</div>' +
+        '<div class="mem-card-created">' +
+        '<span class="mem-card-created-label">创建时间</span>' +
+        '<span class="mem-card-created-value">' + esc(item.created_at) + '</span>' +
         '</div>' +
         '</div>';
     }

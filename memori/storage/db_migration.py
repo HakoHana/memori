@@ -34,7 +34,6 @@ VERSIONS: dict[str, int] = {
     "diaries": 1,        # v1：删除 diary_entries.user_id 列
     "conversations": 1,  # v1：messages.sender_id 从 raw QQ → canonical uid
     "graph": 1,          # v1：ISO 字符串 → epoch float 统一
-    "state": 0,          # 由 StateStore.initialize() 统一建表
 }
 
 # ── 迁移清单（用于日志和调试） ────────────────────────────
@@ -86,7 +85,7 @@ class DBMigration(BaseDbStore):
     - diaries: 日记数据库（diary_entries、diary_fts）
     - conversations: 会话数据库（sessions、messages）
     - graph: 图谱数据库（graph_nodes、graph_edges、entity_cooccur）
-    - state: 状态数据库（consolidation_state）
+    - state: 已合并到 conversations.sessions.metadata（原 consolidation_state 表已移除）
     """
 
     # 是否创建备份（可被测试覆写）
@@ -280,13 +279,6 @@ class DBMigration(BaseDbStore):
                     "created_at", "updated_at",
                 ],
             },
-            "state": {
-                "consolidation_state": [
-                    "user_id", "msg_count", "warmup_threshold", "last_consolidated_at",
-                    "last_diary_date", "diary_count", "diary_count_since_persona",
-                    "l1_retry_count",
-                ],
-            },
         }
         expected_columns = by_scope.get(self.scope, {})
 
@@ -340,8 +332,8 @@ class DBMigration(BaseDbStore):
         v3: memory_atoms 列兜底 + 索引覆盖
 
         只检查 memory.db 中仍保留的表（memory_atoms、write_ops）。
-        diary_entries / graph_nodes / consolidation_state 等表
-        已迁至独立的 diaries.db / graph.db / state.db。
+        diary_entries / graph_nodes 已迁至独立的 diaries.db / graph.db。
+        consolidation_state 已移除，改存 conversations.db 的 sessions.metadata。
         """
         async with self._connect() as db:
             # ── memory_atoms 完整列检查 ──

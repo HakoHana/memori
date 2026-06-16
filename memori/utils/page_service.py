@@ -100,12 +100,12 @@ class PageService:
             return self._error(str(e))
 
     async def list_memories(self, page: int = 1, size: int = 20) -> dict:
-        """日记列表（分页，全库）"""
+        """日记列表（分页，全库），按创建时间降序"""
         try:
             offset = (page - 1) * size
             rows = await self._db_diary.fetch(
-                "SELECT id, date, importance, sentiment, topics, created_at "
-                "FROM diary_entries ORDER BY date DESC LIMIT ? OFFSET ?",
+                "SELECT id, date, importance, sentiment, topics, created_at, updated_at "
+                "FROM diary_entries ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 (size, offset),
             )
             total = (await self._db_diary.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
@@ -122,7 +122,7 @@ class PageService:
                 items.append({
                     "id": r[0], "date": r[1],
                     "importance": r[2], "sentiment": r[3], "topics": topics,
-                    "created_at": fmt_ts(r[5]),
+                    "created_at": fmt_ts(r[5]), "updated_at": fmt_ts(r[6]),
                 })
             return self._ok({"items": items, "total": total, "page": page, "size": size})
         except Exception as e:

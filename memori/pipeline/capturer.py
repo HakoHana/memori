@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -130,74 +131,81 @@ class Capturer(ICapturer):
 
         # 2a. 全局去重 + 桥表关联（原子事实是全局的，跨用户去重）
         atoms: list[MemoryAtom] = []
-        for atom in raw_atoms:
-            atom.prepare_insert()
-            if self.lifecycle:
-                matched, ex = await self.lifecycle.dedup_and_reinforce(
-                    atom.content or "", "global",
-                    judge_importance=judge_result.importance,
-                    new_confidence=atom.confidence,
-                )
-                if matched and ex and diary_id > 0:
-                    # 已存在，强化后桥表关联到当前日记
-                    await self._store.atom_store.link_atom_to_diary(
-                        ex.atom_id, diary_id,
-                        snippet=atom.diary_snippet,
-                        importance=atom.importance,
+        _atoms_ok = True
+        try:
+            for atom in raw_atoms:
+                atom.prepare_insert()
+                if self.lifecycle:
+                    matched, ex = await self.lifecycle.dedup_and_reinforce(
+                        atom.content or "", "global",
+                        judge_importance=judge_result.importance,
+                        new_confidence=atom.confidence,
                     )
-                    continue
-                if not matched:
-                    atoms.append(atom)
-            else:
-                atoms.append(atom)
-            if len(atoms) >= 5:
-                break  # 限 5 条
-
-        # 2b. 算 embedding（如有 provider，供语义去重 + 入库持久化）
-        _emb_model = ""
-        if self.embed_provider and atoms:
-            try:
-                texts = [a.content[:512] for a in atoms if a.content]
-                if texts:
-                    embeddings = await self.embed_provider.embed_batch(texts)
-                    _emb_model = type(self.embed_provider).__name__
-                    for atom, emb in zip(atoms, embeddings):
-                        if emb:
-                            atom.embedding = emb
-            except Exception as e:
-                logger.warning(f"[Capturer] Embedding 计算失败（跳过语义去重）: {e}")
-
-        # 2c. 语义去重（Jieba → FTS 粗召回 → Jaccard 筛选 → 余弦精排）
-        if self.lifecycle and self.lifecycle.dedup and atoms and _emb_model:
-            try:
-                atoms = await self.lifecycle.dedup.semantic_dedup_new_atoms(
-                    atoms, diary_id, _emb_model, threshold=0.90,
-                )
-            except Exception as e:
-                logger.warning(f"[Capturer] 语义去重异常（跳过，继续入库）: {e}")
-
-        if atoms:
-            ids = await self._store.insert_atoms(atoms)
-            for atom, aid in zip(atoms, ids):
-                atom.atom_id = aid
-                # 新原子桥表关联到当前日记
-                if diary_id > 0:
-                    try:
+                    if matched and ex and diary_id > 0:
                         await self._store.atom_store.link_atom_to_diary(
-                            aid, diary_id, snippet=atom.diary_snippet, importance=atom.importance,
+                            ex.atom_id, diary_id,
+                            snippet=atom.diary_snippet,
+                            importance=atom.importance,
                         )
-                    except Exception:
-                        pass
-                # 持久化 embedding（2b 已算好，写入内存，此处写库）
-                if getattr(atom, 'embedding', None) and atom.atom_id > 0:
-                    try:
-                        await self._store.update_embedding(
-                            atom.atom_id, atom.embedding, _emb_model,
-                        )
-                    except Exception:
-                        pass
+                        continue
+                    if not matched:
+                        atoms.append(atom)
+                else:
+                    atoms.append(atom)
+                if len(atoms) >= 5:
+                    break
+
+            # 2b. 算 embedding
+            _emb_model = ""
+            if self.embed_provider and atoms:
+                try:
+                    texts = [a.content[:512] for a in atoms if a.content]
+                    if texts:
+                        embeddings = await self.embed_provider.embed_batch(texts)
+                        _emb_model = type(self.embed_provider).__name__
+                        for atom, emb in zip(atoms, embeddings):
+                            if emb:
+                                atom.embedding = emb
+                except Exception as e:
+                    logger.warning(f"[Capturer] Embedding 失败: {e}")
+
+            # 2c. 语义去重
+            if self.lifecycle and self.lifecycle.dedup and atoms and _emb_model:
+                try:
+                    atoms = await self.lifecycle.dedup.semantic_dedup_new_atoms(
+                        atoms, diary_id, _emb_model, threshold=0.90,
+                    )
+                except Exception as e:
+                    logger.warning(f"[Capturer] 语义去重异常: {e}")
+
+            if atoms:
+                ids = await self._store.insert_atoms(atoms)
+                for atom, aid in zip(atoms, ids):
+                    atom.atom_id = aid
+                    if diary_id > 0:
+                        try:
+                            await self._store.atom_store.link_atom_to_diary(
+                                aid, diary_id,
+                                snippet=atom.diary_snippet,
+                                importance=atom.importance,
+                            )
+                        except Exception:
+                            pass
+                    if getattr(atom, 'embedding', None) and atom.atom_id > 0:
+                        try:
+                            await self._store.update_embedding(
+                                atom.atom_id, atom.embedding, _emb_model,
+                            )
+                        except Exception:
+                            pass
+                if op_id:
+                    await self._store.step_op(op_id, "atoms_stored")
+        except Exception:
+            logger.exception("[Capturer] 原子处理异常")
+            _atoms_ok = False
             if op_id:
-                await self._store.step_op(op_id, "atoms_stored")
+                err_msg = traceback.format_exc()
+                await self._store.fail_op(op_id, f"atom_processing_failed: {err_msg[:500]}")
 
         # 3. 异步更新图谱（fire-and-forget，不阻塞 capture 返回）
         #    图谱是 diary 写入的副产物，不需要等待
@@ -215,7 +223,7 @@ class Capturer(ICapturer):
             except Exception:
                 pass
 
-        if op_id:
+        if op_id and _atoms_ok:
             await self._store.complete_op(op_id)
 
         return CaptureResult(

@@ -2131,6 +2131,8 @@ body {
   transition: all 0.25s ease;
   position: relative;
   box-shadow: 0 2px 8px rgba(178, 136, 208, 0.07), 0 1px 3px rgba(0,0,0,0.03);
+  display: flex;
+  align-items: stretch;
   /* 便签纸折角效果 */
   overflow: hidden;
 }
@@ -2172,6 +2174,12 @@ body {
   box-shadow: 0 4px 16px rgba(0,0,0,0.35);
 }
 
+
+.mem-card-body {
+  flex: 1;
+  min-width: 0;
+  padding-right: 4px;
+}
 
 .mem-card-top {
   display: flex;
@@ -2261,6 +2269,34 @@ body {
   padding: 60px 20px;
   color: var(--text-tertiary);
   font-size: 14px;
+}
+
+.mem-card-created {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 22px;
+  min-width: 110px;
+  border-left: 1px solid rgba(210, 195, 220, 0.2);
+  gap: 3px;
+}
+
+.mem-card-created-label {
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  color: var(--text-tertiary);
+}
+
+.mem-card-created-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+[data-theme="dark"] .mem-card-created {
+  border-left-color: rgba(201, 168, 224, 0.08);
 }
 
 /* Skeleton loading for cards */

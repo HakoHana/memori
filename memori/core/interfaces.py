@@ -267,14 +267,14 @@ class IConsolidationManager(ABC):
 
     @abstractmethod
     async def on_message(
-        self, user_id: str, conversation_text: str, sender_name: str = ""
+        self, user_id: str, conversation_text: str, sender_name: str = "", session_id: str = ""
     ):
-        """消息入口：仅更新活动时间，不计数"""
+        """消息入口：仅更新指定 session 的活动时间，不计数"""
         ...
 
     @abstractmethod
     async def on_round_complete(self, user_id: str, session_id: str = ""):
-        """Bot 完成一轮对话后调用：累计轮数 → 达阈值触发整理"""
+        """Bot 完成一轮对话后调用：查 DB 未处理消息数 → 达阈值触发整理"""
         ...
 
     @abstractmethod
@@ -293,8 +293,8 @@ class IConsolidationManager(ABC):
         ...
 
     @abstractmethod
-    def get_state(self, user_id: str):
-        """获取用户会话状态"""
+    def get_state(self, session_id: str):
+        """获取会话状态（key = session_id）"""
         ...
 
 

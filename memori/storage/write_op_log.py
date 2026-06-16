@@ -95,11 +95,10 @@ class WriteOpLog(BaseDbStore):
             payload = op["payload"]
             if op_type == "capture":
                 if step == "diary_written":
-                    # 日记已写但原子未写入 → 安全，跳过
-                    await self.complete(op["id"])
+                    # 日记已写但原子未写入 → 标记失败，后续重试
+                    await self.fail(op["id"], "diary_written but atoms not processed")
                 elif step == "started":
-                    # 什么都没写 → 安全，跳过
-                    await self.complete(op["id"])
+                    await self.fail(op["id"], "capture not started (no data written)")
                 else:
                     await self.fail(op["id"], "repaired: incomplete on startup")
             else:

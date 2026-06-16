@@ -230,12 +230,12 @@ class DiaryStore(BaseDbStore):
     async def list_paginated(
         self, page: int = 1, size: int = 20
     ) -> tuple[list[dict], int]:
-        """分页日记列表（全库，不按用户过滤）"""
+        """分页日记列表（全库，不按用户过滤），按创建时间降序"""
         offset = (page - 1) * size
-        columns = ("id", "date", "content", "importance", "sentiment", "topics", "created_at")
+        columns = ("id", "date", "content", "importance", "sentiment", "topics", "created_at", "updated_at")
         rows = await self.fetch(
             f"SELECT {', '.join(columns)} FROM diary_entries "
-            "ORDER BY date DESC LIMIT ? OFFSET ?",
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (size, offset),
         )
         total = (await self.fetchone("SELECT COUNT(*) FROM diary_entries"))[0]
@@ -253,7 +253,7 @@ class DiaryStore(BaseDbStore):
             items.append({
                 "id": r[0], "date": r[1], "content": r[2],
                 "importance": r[3], "sentiment": r[4], "topics": topics,
-                "created_at": r[6],
+                "created_at": r[6], "updated_at": r[7],
             })
         return items, total
 

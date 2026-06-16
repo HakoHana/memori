@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -44,23 +45,13 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._loaded = False
         self._load_error: str | None = None
         self._last_retry_time: float = 0
+        self._loading_task: asyncio.Task | None = None
 
-    async def ensure_loaded(self):
-        """异步初始化模型（首次调用 embed 时自动调用，也可手动预加载）
-
-        加载策略：
-          1. 先尝试 local_files_only=True（零网络，适用于模型已缓存）
-          2. 失败后 fallback 到不限模式（允许从 HF Hub 下载）
-          3. 加载失败后记录错误，冷却 60 秒再重试
-        """
+    async def _load_model(self):
+        """实际加载逻辑（保证只执行一次，由 ensure_loaded / preload 触发）"""
+        # 再次检查——可能在等待 _loading_task 时已经加载完了
         if self._loaded:
             return
-
-        # 冷却期内不再重试
-        if self._load_error and (time.time() - self._last_retry_time) < 60:
-            raise RuntimeError(
-                f"嵌入模型上次加载失败（60 秒冷却期）: {self._load_error}"
-            )
 
         try:
             from sentence_transformers import SentenceTransformer
@@ -69,7 +60,6 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                 "LocalEmbeddingProvider 需要 sentence-transformers。\n"
                 "请运行: pip install 'memori[embedding]'"
             )
-        import asyncio
 
         loop = asyncio.get_event_loop()
 
@@ -108,6 +98,45 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             self._last_retry_time = time.time()
             raise
 
+    async def ensure_loaded(self):
+        """确保模型已加载——如有进行中的加载则等待，否则启动加载
+
+        支持并发调用：多个协程同时调用时，只会启动一次实际加载。
+        """
+        if self._loaded:
+            return
+
+        # 有进行中的加载 → 等待它完成
+        if self._loading_task is not None and not self._loading_task.done():
+            await self._loading_task
+            return
+
+        # 冷却期内不再重试
+        if self._load_error and (time.time() - self._last_retry_time) < 60:
+            raise RuntimeError(
+                f"嵌入模型上次加载失败（60 秒冷却期）: {self._load_error}"
+            )
+
+        # 启动新的加载任务（确保 ensure_loaded 可重入）
+        self._loading_task = asyncio.ensure_future(self._load_model())
+        try:
+            await self._loading_task
+        finally:
+            self._loading_task = None
+
+    def preload(self):
+        """异步预加载——启动后台加载，不等待完成
+
+        适合在 MemoryCore 初始化完成后调用，让模型在后台加载，
+        等第一次 capture 需要 embed 时模型已就绪。
+        """
+        if self._loaded or self._loading_task is not None:
+            return
+        task = asyncio.ensure_future(self._load_model())
+        # 消费异常避免 "Task exception was never retrieved" 警告
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        self._loading_task = task
+
     async def embed(self, text: str) -> list[float]:
         await self.ensure_loaded()
         return self._model.encode(text).tolist()
@@ -130,6 +159,13 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     async def close(self):
         """释放模型资源"""
+        if self._loading_task is not None and not self._loading_task.done():
+            self._loading_task.cancel()
+            try:
+                await self._loading_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._loading_task = None
         self._model = None
         self._dim = None
         self._loaded = False

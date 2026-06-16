@@ -812,6 +812,13 @@ class MemoryCore:
                 embed_id,
                 type(new_provider).__name__,
             )
+            # 异步预加载（如果有事件循环）
+            if hasattr(new_provider, "preload"):
+                try:
+                    asyncio.get_running_loop()
+                    new_provider.preload()
+                except RuntimeError:
+                    pass  # 初始化阶段尚无事件循环，靠懒加载兜底
             # 同步给下游模块
             if hasattr(self, "capturer") and self.capturer:
                 self.capturer.embed_provider = new_provider

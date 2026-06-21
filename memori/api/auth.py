@@ -18,7 +18,9 @@ from typing import Any
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from astrbot.api import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AuthManager:

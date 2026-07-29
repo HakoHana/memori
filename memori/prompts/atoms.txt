@@ -1,11 +1,13 @@
-从下面的日记中提取关键事实（记忆原子）。用第三人称客观陈述，像写百科条目一样。
+从下面的日记中提取关键事实。用第三人称客观陈述，像写百科条目一样。
 
 要求：
 - 每条原子 = 一句客观事实陈述，**绝对不要使用"用户"这个词**
-- 用对话中出现的真实人名（如Hako），不用"用户"、不用"我"
+- 用户用对话中出现的真实人名（如Hako）
+- **提到你自己（AI/助手/当前身份）时，用"我"代替你的名字**
 - 不写感受、不写评价、不写自身视角
 - ✅ 正确例子：`Hako说...` `Hako正在学习钢琴` `Hako的宠物狗叫吉米亨`
-- ❌ 错误例子：`用户对Hako说...` `用户正在学习钢琴`（禁止出现"用户"）
+- ✅ 提到自己时：`Hako让我帮忙读文件` `Hako在教我新知识`
+- ❌ 错误例子：`用户对Hako说...` `Hako对Hana说...`（禁止"用户"和你的名字）
 - 一句话说完，不限字数，但不要冗余
 - **最多提取 5 条最重要的原子事实**，不是每句话都提取
 - **只提取真正重要的信息**，琐碎细节不要
@@ -34,15 +36,15 @@
 
 同一条日记可以产出多类原子。例如日记「Hako说喜欢草莓味冰淇淋，我们约好明天一起去买」：
 - factual:     "Hako喜欢草莓味冰淇淋"
-- planned:     "Hako和我约定明天一起去买冰淇淋"
+- planned:     "我和Hako约定明天一起去买冰淇淋"
 - preference:  "Hako偏好草莓口味"
 
 输出 JSON（每个原子必须包含 type / content / importance / entities / diary_snippet）：
 {"atoms": [
     {"type": "factual", "content": "Hako的常用昵称是'はこ'", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "用户2398604399（はこ）的常用昵称为'はこ'"},
-    {"type": "factual", "content": "Hako从零手搓开发了AI助手Hana", "importance": 0.9, "entities": ["Hako", "Hana"], "diary_snippet": "用户2398604399（はこ）从零手搓开发了AI助手Hana"},
+    {"type": "factual", "content": "Hako从零手搓开发了AI助手", "importance": 0.9, "entities": ["Hako"], "diary_snippet": "用户2398604399（はこ）从零手搓开发了AI助手"},
     {"type": "preference", "content": "Hako喜欢草莓味冰淇淋", "importance": 0.6, "entities": ["Hako"], "diary_snippet": "Hako说喜欢草莓味冰淇淋"},
-    {"type": "planned", "content": "Hako和我约定明天一起去买冰淇淋", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
+    {"type": "planned", "content": "我和Hako约定明天一起去买冰淇淋", "importance": 0.7, "entities": ["Hako"], "diary_snippet": "我们约好明天一起去买"}
 ]}
 
 ⚠️ 注意：diary_snippet 可含"用户"（日记原句摘录），但 **content 字段绝对不能出现"用户"**

@@ -34,5 +34,11 @@
     "description": "Dashboard 端口",
     "default": 8765,
     "hint": "Dashboard 和 REST API 端口"
+  },
+  "recall_context_messages": {
+    "type": "int",
+    "description": "召回上下文消息数",
+    "default": 5,
+    "hint": "召回记忆时取最近 N 条消息作为查询上下文（0=仅用当前消息）"
   }
 }

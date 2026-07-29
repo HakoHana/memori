@@ -233,11 +233,14 @@ class MemoriPlugin(Star):
         cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event), event.get_platform_name())
 
         system_prompt = getattr(event, "system_prompt", "") or ""
+        recall_ctx = int(self.config.get("recall_context_messages", 5))
         new_system, new_user = await self.core.process_message(
             user_id=cuid,
             message_text=raw_text,
             sender_name=display_name,
             system_prompt=system_prompt,
+            session_id=event.unified_msg_origin,
+            recall_context_messages=recall_ctx,
         )
 
         # 应用 system_prompt 变化（记忆注入到 system_prompt 的情况）

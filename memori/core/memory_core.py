@@ -558,12 +558,16 @@ class MemoryCore:
         sender_name: str = "",
         system_prompt: str = "",
         event_extra: dict | None = None,
+        session_id: str = "",
+        recall_context_messages: int = 0,
     ) -> tuple[str, str | None]:
         """处理一条用户消息
 
         返回 (new_system_prompt, modified_user_message)
         - new_system_prompt: 可能被记忆增强后的 system_prompt
         - modified_user_message: 可能被记忆增强后的用户消息，None 表示无变化
+
+        recall_context_messages: 召回时取最近 N 条消息作为查询上下文（0=仅用当前消息）
         """
         if not self._initialized:
             return system_prompt, None
@@ -575,8 +579,20 @@ class MemoryCore:
             await self._handle_command(user_id, message_text)
             return system_prompt, None
 
+        # 召回时用最近 N 条消息作为查询上下文（而非仅当前消息）
+        recall_query = message_text
+        if recall_context_messages > 0 and session_id and self.retriever.conversation_store:
+            try:
+                recent = await self.retriever.conversation_store.get_recent_context(
+                    session_id, limit=recall_context_messages
+                )
+                if recent:
+                    recall_query = f"{recent}\n\n{message_text}"
+            except Exception:
+                pass
+
         # 召回记忆并注入
-        recall_result = await self.retriever.get_context_memories(user_id, message_text)
+        recall_result = await self.retriever.get_context_memories(user_id, recall_query)
 
         if not recall_result.memory_text and not recall_result.persona_text:
             return system_prompt, None

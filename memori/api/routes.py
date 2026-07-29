@@ -492,6 +492,8 @@ _CONFIG_META = {
                                    "hint": "开启后注册 recall_long_term_memory，允许 Agent 主动检索长期记忆"},
     "agent_memorize_tool_enabled": {"type": "bool", "default": False, "label": "启用主动记忆写入工具", "group": "Agent",
                                      "hint": "开启后注册 memorize_long_term_memory，允许 Agent 主动写入长期记忆"},
+    "recall_context_messages": {"type": "int", "default": 5, "label": "召回上下文消息数", "group": "检索",
+                                 "hint": "召回记忆时取最近 N 条消息作为查询上下文（0=仅用当前消息）"},
 }
 
 

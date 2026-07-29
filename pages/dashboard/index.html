@@ -2,36 +2,54 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="0;url=http://localhost:8765/">
-<script>
-// 如果 meta refresh 没生效（iframe 内可能被拦截），JS 尝试强制跳转
-var dest = 'http://localhost:8765/';
-try {
-    if (window.top !== window.self) {
-        window.top.location.replace(dest);
-    } else {
-        window.location.replace(dest);
-    }
-} catch(e) {
-    // 跨域 iframe 无法访问 top，直接跳转 iframe 自身
-    window.location.replace(dest);
-}
-</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>memori Dashboard</title>
 <style>
-  body { font-family: sans-serif; text-align: center; padding: 60px 20px; background: #f5f5f5; color: #333; }
-  a { color: #6366f1; }
-  .loading { animation: pulse 1.5s infinite; font-size: 48px; margin-bottom: 16px; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #fff; }
+  iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+  .fallback {
+    display: none;
+    font-family: sans-serif;
+    text-align: center;
+    padding: 60px 20px;
+    background: #f5f5f5;
+    color: #333;
+  }
+  .fallback a { color: #6366f1; }
 </style>
 </head>
 <body>
-<div class="loading">🧠</div>
-<h2>正在跳转到 Dashboard…</h2>
-<p style="color:#888;margin-top:16px">
-  如果未自动跳转，<a href="http://localhost:8765/" target="_top">点击此处</a>
-</p>
-<p style="color:#999;font-size:13px;margin-top:8px">
-  地址: <code>http://localhost:8765/</code>
-</p>
+<iframe id="dashboard-frame" src="http://localhost:8765/"
+        allow="clipboard-read; clipboard-write"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+<div class="fallback" id="fallback">
+  <h2>Dashboard 无法加载</h2>
+  <p style="color:#888;margin-top:16px">
+    请直接访问 <a href="http://localhost:8765/" target="_blank">http://localhost:8765/</a>
+  </p>
+</div>
+<script>
+  var frame = document.getElementById('dashboard-frame');
+  frame.onerror = function() {
+    document.getElementById('fallback').style.display = 'block';
+    frame.style.display = 'none';
+  };
+  // 超时检测
+  setTimeout(function() {
+    try {
+      if (frame.contentDocument && frame.contentDocument.body.innerHTML === '') {
+        document.getElementById('fallback').style.display = 'block';
+        frame.style.display = 'none';
+      }
+    } catch(e) {
+      // 跨域 iframe 无法读取 contentDocument，说明正常加载了
+    }
+  }, 5000);
+</script>
 </body>
 </html>

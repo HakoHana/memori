@@ -558,27 +558,28 @@ class MemoryCore:
         sender_name: str = "",
         system_prompt: str = "",
         event_extra: dict | None = None,
-    ) -> str | None:
+    ) -> tuple[str, str | None]:
         """处理一条用户消息
 
-        返回修改后的用户消息文本（含注入的记忆），
-        或 None（记忆已注入到 system_prompt，消息无变化）。
+        返回 (new_system_prompt, modified_user_message)
+        - new_system_prompt: 可能被记忆增强后的 system_prompt
+        - modified_user_message: 可能被记忆增强后的用户消息，None 表示无变化
         """
         if not self._initialized:
-            return None
+            return system_prompt, None
         if not user_id or not message_text:
-            return None
+            return system_prompt, None
 
         # 指令
         if message_text.startswith("/"):
             await self._handle_command(user_id, message_text)
-            return None
+            return system_prompt, None
 
         # 召回记忆并注入
         recall_result = await self.retriever.get_context_memories(user_id, message_text)
 
         if not recall_result.memory_text and not recall_result.persona_text:
-            return None
+            return system_prompt, None
 
         new_system, new_user = self.injector.inject(
             memory_text=recall_result.memory_text,
@@ -588,13 +589,8 @@ class MemoryCore:
             user_name=sender_name or user_id,
         )
 
-        if new_system != system_prompt:
-            return new_user  # 调用方需要更新 system_prompt
-
-        if new_user != message_text:
-            return new_user
-
-        return None
+        modified_user = new_user if new_user != message_text else None
+        return new_system, modified_user
 
     async def trigger_capture(self, user_id: str, text: str):
         """后台触发记忆整理"""

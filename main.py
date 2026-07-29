@@ -180,46 +180,32 @@ class MemoriPlugin(Star):
             pass
         return ""
 
-    async def _ensure_user_identity(self, user_id: str, event_sender_name: str = "") -> tuple[str, str]:
+    async def _ensure_user_identity(self, user_id: str, event_sender_name: str = "", platform: str = "aiocqhttp") -> tuple[str, str]:
         """查/建 canonical uid → 返回 (canonical_uid, display_name)
-
-        所有内部存储操作必须使用 canonical_uid，显示名只对 LLM/用户展示用。
         """
         if not self.core or not self.core.atom_store:
             display = event_sender_name or (f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户")
             return (user_id, display)
 
         try:
-            platform_id = f"qq:{user_id}"
-            result = await self.core.atom_store.resolve_identity(platform_id)
+            plat = "qq" if platform == "aiocqhttp" else platform
+            result = await self.core.atom_store.resolve_identity(plat, user_id)
 
             if result:
-                cuid, name = result
-                if not name:
-                    name = event_sender_name or (f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户")
-                # 更新最后活跃
+                cuid, names = result
+                name = names[0] if names else (event_sender_name or f"用户{user_id[-4:]}")
                 await self.core.atom_store.execute(
-                    "UPDATE user_identities SET display_name=?, last_seen=? WHERE platform_id=?",
-                    (name, time.time(), platform_id),
+                    "UPDATE user_identities SET last_seen=? WHERE uid=?",
+                    (time.time(), cuid),
                 )
                 return (cuid, name)
 
-            # 新用户
-            import uuid
-            cuid = "u_" + uuid.uuid4().hex[:12]
-            now = time.time()
-            name = event_sender_name.strip() if event_sender_name and event_sender_name.strip() else (
-                f"用户{user_id[-4:]}" if len(user_id) >= 4 else "用户"
+            # 新用户 — 用 ensure_canonical_user 统一处理
+            return await self.core.atom_store.ensure_canonical_user(
+                platform=plat,
+                platform_user_id=user_id,
+                display_name=event_sender_name,
             )
-            await self.core.atom_store.execute(
-                "INSERT INTO canonical_users (uid, primary_name, created_at, updated_at) VALUES (?,?,?,?)",
-                (cuid, name, now, now),
-            )
-            await self.core.atom_store.execute(
-                "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen, last_seen, source) VALUES (?,?,?,?,?,?,?)",
-                (platform_id, cuid, "qq", name, now, now, "auto"),
-            )
-            return (cuid, name)
 
         except Exception as e:
             logger.warning(f"[memori] _ensure_user_identity 异常: {e}")
@@ -244,21 +230,26 @@ class MemoriPlugin(Star):
             return
 
         raw_uid = AstrBotCtx().get_user_id(event)
-        cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event))
+        cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event), event.get_platform_name())
 
         system_prompt = getattr(event, "system_prompt", "") or ""
-        result = await self.core.process_message(
+        new_system, new_user = await self.core.process_message(
             user_id=cuid,
             message_text=raw_text,
             sender_name=display_name,
             system_prompt=system_prompt,
         )
 
-        if result is not None:
-            event.message_obj.message_str = result
+        # 应用 system_prompt 变化（记忆注入到 system_prompt 的情况）
+        if new_system != system_prompt and req:
+            event.system_prompt = new_system
+            req.system_prompt = new_system
 
-        if hasattr(event, 'system_prompt') and event.system_prompt and req:
-            req.system_prompt = event.system_prompt
+        # 应用用户消息变化（记忆注入到用户消息的情况）
+        if new_user is not None:
+            event.message_obj.message_str = new_user
+            if hasattr(req, 'prompt'):
+                req.prompt = new_user
 
     # ── 后台整理 ──
 
@@ -269,7 +260,7 @@ class MemoriPlugin(Star):
         try:
             raw_uid = AstrBotCtx().get_user_id(event)
             txt = AstrBotCtx().get_conversation_text(event)
-            cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event))
+            cuid, display_name = await self._ensure_user_identity(raw_uid, self._get_sender_name(event), event.get_platform_name())
 
             if not cuid or not txt or txt.startswith("/"):
                 return
@@ -308,7 +299,7 @@ class MemoriPlugin(Star):
         try:
             if response:
                 raw_uid = AstrBotCtx().get_user_id(event)
-                cuid, _ = await self._ensure_user_identity(raw_uid)
+                cuid, _ = await self._ensure_user_identity(raw_uid, platform=event.get_platform_name())
                 resp_text = ""
                 if hasattr(response, "result_chain") and response.result_chain:
                     resp_text = response.result_chain.get_plain_text() or ""

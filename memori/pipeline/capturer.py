@@ -510,13 +510,20 @@ class Capturer(ICapturer):
         """根据实体名查 canonical uid"""
         if entity_name in self._entity_uid_cache:
             return self._entity_uid_cache[entity_name]
+        import json
         try:
-            row = await self.atom_store.fetchone(
-                "SELECT uid FROM canonical_users WHERE primary_name=?", (entity_name,)
-            )
-            if row:
-                self._entity_uid_cache[entity_name] = row[0]
-                return row[0]
+            # 在 names 数组中搜索
+            rows = await self.atom_store.fetch("SELECT uid, names FROM canonical_users")
+            for uid, ns_json in rows:
+                if not ns_json:
+                    continue
+                try:
+                    ns = json.loads(ns_json)
+                    if entity_name in ns:
+                        self._entity_uid_cache[entity_name] = uid
+                        return uid
+                except Exception:
+                    continue
             self._entity_uid_cache[entity_name] = ""  # 缓存未命中
         except Exception:
             pass

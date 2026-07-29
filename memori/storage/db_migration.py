@@ -26,7 +26,7 @@ from .base_store import BaseDbStore
 # ── 当前 schema 版本 ──────────────────────────────────────
 # 升级此值表示有一套新的迁移要跑。
 # 迁移方法名必须为 _migrate_v{version} 或 _migrate_{scope}_v{version}。
-CURRENT_VERSION = 6
+CURRENT_VERSION = 7
 
 # ── 每类数据库的 schema 版本（默认 0 表示由 Store.initialize() 统一建表） ──
 VERSIONS: dict[str, int] = {
@@ -473,6 +473,76 @@ class DBMigration(BaseDbStore):
                 pass
             await db.commit()
         logger.info("[Migration] v6 完成: persona_embedding 列已就绪")
+
+    async def _migrate_v7(self):
+        """v7: 身份表重构 — canonical_users.names (JSON 数组) + user_identities 一人一条"""
+        async with self._connect() as db:
+            cols = await db.fetch("PRAGMA table_info('canonical_users')")
+            col_names = [c[1] for c in cols]
+            if "names" in col_names:
+                logger.info("[Migration] v7 已执行过，跳过")
+                return
+
+            # canonical_users: primary_name → names 数组
+            await db.execute("""
+                CREATE TABLE canonical_users_v2 (
+                    uid TEXT PRIMARY KEY,
+                    names TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL DEFAULT 0.3,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+            await db.execute("""
+                INSERT INTO canonical_users_v2 (uid, names, confidence, created_at, updated_at)
+                SELECT uid,
+                       CASE WHEN primary_name IS NOT NULL AND primary_name != ''
+                            THEN '["' || replace(primary_name, '"', '\\"') || '"]'
+                            ELSE '[]' END,
+                       identity_confidence, created_at, updated_at
+                FROM canonical_users
+            """)
+            await db.execute("DROP TABLE canonical_users")
+            await db.execute("ALTER TABLE canonical_users_v2 RENAME TO canonical_users")
+
+            # user_identities: 按 uid 合并为一人一条
+            await db.execute("""
+                CREATE TABLE user_identities_v2 (
+                    uid TEXT PRIMARY KEY,
+                    platform_ids TEXT NOT NULL DEFAULT '{}',
+                    first_seen REAL,
+                    last_seen REAL,
+                    verified INTEGER DEFAULT 0,
+                    source TEXT DEFAULT 'auto'
+                )
+            """)
+            rows = await db.fetch("""
+                SELECT uid, MIN(first_seen), MAX(last_seen),
+                       MAX(verified), source
+                FROM user_identities GROUP BY uid
+            """)
+            import json
+            for uid, first, last, verified, source in rows:
+                id_rows = await db.fetch(
+                    "SELECT platform_id, platform FROM user_identities WHERE uid=?",
+                    (uid,)
+                )
+                platform_ids: dict[str, list[str]] = {}
+                for pid, plat in id_rows:
+                    if ":" in pid:
+                        p, uid_part = pid.split(":", 1)
+                    else:
+                        p, uid_part = plat or "unknown", pid
+                    platform_ids.setdefault(p, []).append(uid_part)
+                await db.execute(
+                    "INSERT INTO user_identities_v2 (uid, platform_ids, first_seen, last_seen, verified, source) VALUES (?,?,?,?,?,?)",
+                    (uid, json.dumps(platform_ids, ensure_ascii=False), first, last, verified or 0, source or "auto"),
+                )
+            await db.execute("DROP TABLE user_identities")
+            await db.execute("ALTER TABLE user_identities_v2 RENAME TO user_identities")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_identity_uid ON user_identities(uid)")
+            await db.commit()
+        logger.info("[Migration] v7 完成: 身份表已重构（names 数组 + platform_ids 字典）")
 
     async def _migrate_diaries_v1(self):
         """v1: 删除 diary_entries.user_id 列（日记无归属）"""

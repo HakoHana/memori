@@ -22,5 +22,17 @@
     "description": "多少分钟无消息后自动整理",
     "default": 360,
     "hint": "距离上次整理超过此时间则触发"
+  },
+  "api_host": {
+    "type": "string",
+    "description": "Dashboard 监听地址",
+    "default": "127.0.0.1",
+    "hint": "设为 0.0.0.0 允许外部访问"
+  },
+  "api_port": {
+    "type": "int",
+    "description": "Dashboard 端口",
+    "default": 8765,
+    "hint": "Dashboard 和 REST API 端口"
   }
 }

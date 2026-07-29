@@ -329,18 +329,23 @@ class PageService:
     async def list_users(self) -> dict:
         """用户列表"""
         try:
+            import json
             rows = await self._db.fetch("""
-                SELECT cp.uid, cp.primary_name, cp.identity_confidence,
+                SELECT cp.uid, cp.names, cp.confidence,
                        up.tier, up.summary, up.last_full_update
                 FROM canonical_users cp
                 LEFT JOIN user_persona up ON cp.uid = up.uid
                 ORDER BY up.last_full_update DESC
             """)
-            users = [{
-                "uid": r[0], "name": r[1] or r[0], "identity_confidence": r[2],
-                "tier": r[3] or "new", "summary": (r[4] or "")[:100],
-                "last_active": r[5],
-            } for r in rows]
+            users = []
+            for r in rows:
+                names = json.loads(r[1]) if r[1] else []
+                name = names[0] if names else r[0]
+                users.append({
+                    "uid": r[0], "name": name, "identity_confidence": r[2],
+                    "tier": r[3] or "new", "summary": (r[4] or "")[:100],
+                    "last_active": r[5],
+                })
             return self._ok(users)
         except Exception as e:
             return self._error(str(e))

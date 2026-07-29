@@ -30,17 +30,30 @@ async def _resolve_cuid(core: MemoryCore, raw_id: str) -> tuple[str, str]:
     if not raw_id or not core.atom_store:
         return (raw_id, raw_id or "")
     try:
-        # 1. 先当平台 ID 查
-        result = await core.atom_store.resolve_identity(f"qq:{raw_id}")
+        # 1. 先当 QQ 平台 ID 查
+        result = await core.atom_store.resolve_identity("qq", raw_id)
         if result:
-            return result
-        # 2. 再当 canonical uid 或显示名查
+            return (result[0], result[1][0] if result[1] else raw_id)
+        # 2. 再当 canonical uid 或 names 中的名字查
+        import json
         row = await core.atom_store.fetchone(
-            "SELECT uid, COALESCE(primary_name, '') FROM canonical_users WHERE uid=? OR primary_name=?",
-            (raw_id, raw_id),
+            "SELECT uid, names FROM canonical_users WHERE uid=?",
+            (raw_id,),
         )
         if row:
-            return (row[0], row[1] or raw_id)
+            names = json.loads(row[1]) if row[1] else []
+            return (row[0], names[0] if names else raw_id)
+        # 3. 在 names 数组中搜索
+        all_users = await core.atom_store.fetch("SELECT uid, names FROM canonical_users")
+        for uid, names_json in all_users:
+            if not names_json:
+                continue
+            try:
+                ns = json.loads(names_json)
+                if raw_id in ns:
+                    return (uid, ns[0] if ns else raw_id)
+            except Exception:
+                continue
     except Exception:
         pass
     return (raw_id, raw_id)
@@ -57,6 +70,7 @@ async def process_event(body: EventRequest, core: MemoryCore = Depends(get_core)
         sender_name=display_name or body.sender_name,
         system_prompt=body.system_prompt,
     )
+    _, modified_text = modified if isinstance(modified, tuple) else (None, modified)
 
     # 后台触发整理（不阻塞响应）
     await core.trigger_capture(cuid, body.text)
@@ -65,7 +79,7 @@ async def process_event(body: EventRequest, core: MemoryCore = Depends(get_core)
     recall = await core.retriever.get_context_memories(cuid, body.text)
 
     return EventResponse(
-        modified_text=modified,
+        modified_text=modified_text,
         injected_count=len(recall.atoms),
         recalled_count=len(recall.atoms),
     )

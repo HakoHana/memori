@@ -105,21 +105,49 @@ class IdentityEngine:
     async def merge_identities(self, keep_uid: str, merge_uid: str) -> bool:
         """梦境/手动确认后合并身份：将 merge_uid 的 identities 全部转给 keep_uid
 
-        这是未来梦境状态机调用的接口。
         合并后 merge_uid 不再使用，但保留记录。
         """
+        import json
         try:
             now = __import__("time").time()
-            # 转移所有 platform_id 到 keep_uid
-            await self._atom_store.execute(
-                "UPDATE user_identities SET uid=?, verified=1, last_seen=? WHERE uid=?",
-                (keep_uid, now, merge_uid),
+            # 合并 platform_ids
+            merge_row = await self._atom_store.fetchone(
+                "SELECT platform_ids FROM user_identities WHERE uid=?", (merge_uid,)
             )
-            # 合并 persona（保留 keep_uid 的，追加 merge_uid 的标签）
+            keep_row = await self._atom_store.fetchone(
+                "SELECT platform_ids FROM user_identities WHERE uid=?", (keep_uid,)
+            )
+            merge_ids = json.loads(merge_row[0]) if merge_row and merge_row[0] else {}
+            keep_ids = json.loads(keep_row[0]) if keep_row and keep_row[0] else {}
+            for platform, ids in merge_ids.items():
+                keep_ids.setdefault(platform, [])
+                for pid in ids:
+                    if pid not in keep_ids[platform]:
+                        keep_ids[platform].append(pid)
+            await self._atom_store.execute(
+                "UPDATE user_identities SET platform_ids=?, verified=1, last_seen=?, source='merged' WHERE uid=?",
+                (json.dumps(keep_ids, ensure_ascii=False), now, keep_uid),
+            )
+
+            # 合并 names
+            merge_name_row = await self._atom_store.fetchone(
+                "SELECT names FROM canonical_users WHERE uid=?", (merge_uid,)
+            )
+            keep_name_row = await self._atom_store.fetchone(
+                "SELECT names FROM canonical_users WHERE uid=?", (keep_uid,)
+            )
+            merge_names = set(json.loads(merge_name_row[0]) if merge_name_row and merge_name_row[0] else [])
+            keep_names = set(json.loads(keep_name_row[0]) if keep_name_row and keep_name_row[0] else [])
+            merged_names = list(keep_names | merge_names)
+            await self._atom_store.execute(
+                "UPDATE canonical_users SET names=?, confidence=?, updated_at=? WHERE uid=?",
+                (json.dumps(merged_names, ensure_ascii=False), 1.0, now, keep_uid),
+            )
+
+            # 合并 persona
             keep_p = await self._atom_store.get_user_persona(keep_uid)
             merge_p = await self._atom_store.get_user_persona(merge_uid)
             if keep_p and merge_p:
-                import json
                 keep_tags = set(json.loads(keep_p.get("tags", "[]")) if isinstance(keep_p.get("tags"), str) else keep_p.get("tags", []))
                 merge_tags = set(json.loads(merge_p.get("tags", "[]")) if isinstance(merge_p.get("tags"), str) else merge_p.get("tags", []))
                 merged = keep_tags | merge_tags
@@ -128,10 +156,11 @@ class IdentityEngine:
                     (json.dumps(list(merged), ensure_ascii=False),
                      json.dumps([keep_uid, merge_uid], ensure_ascii=False), now, keep_uid),
                 )
-            # 标记 merge_uid 已合并
+            # 清理 merge_uid 的记录
+            await self._atom_store.execute("DELETE FROM user_identities WHERE uid=?", (merge_uid,))
             await self._atom_store.execute(
-                "UPDATE canonical_users SET primary_name=?, identity_confidence=?, updated_at=? WHERE uid=?",
-                (f"已合并至{keep_uid}", 1.0, now, merge_uid),
+                "UPDATE canonical_users SET names=?, confidence=?, updated_at=? WHERE uid=?",
+                (json.dumps([f"已合并至{keep_uid}"], ensure_ascii=False), 1.0, now, merge_uid),
             )
             logger.info(f"[Identity] 身份合并完成: {merge_uid} → {keep_uid}")
             return True

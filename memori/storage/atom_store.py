@@ -113,22 +113,20 @@ class AtomStore(BaseDbStore, MemoryStore):
             # 用户注册表（已废弃，由 canonical_users + user_identities 替代）
             # user_registry 表在 db_migration.py v9 中删除
 
-            # 规范用户 ID（身份体系 v2）
+            # 规范用户 ID（身份体系 v3：names 数组 + platform_ids 字典）
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS canonical_users (
                     uid TEXT PRIMARY KEY,
-                    primary_name TEXT,
-                    identity_confidence REAL DEFAULT 0.3,
+                    names TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL DEFAULT 0.3,
                     created_at REAL,
                     updated_at REAL
                 )
             """)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_identities (
-                    platform_id TEXT PRIMARY KEY,
-                    uid TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    display_name TEXT,
+                    uid TEXT PRIMARY KEY,
+                    platform_ids TEXT NOT NULL DEFAULT '{}',
                     first_seen REAL,
                     last_seen REAL,
                     verified INTEGER DEFAULT 0,
@@ -412,29 +410,35 @@ class AtomStore(BaseDbStore, MemoryStore):
         """
         related = [user_id]
         try:
-            # 方法1：通过 user_identities 表找到 canonical uid，再查所有平台 ID
-            row = await self.fetchone(
-                "SELECT uid FROM user_identities WHERE platform_id=? OR platform_id=?",
-                (user_id, f"qq:{user_id}"),
-            )
-            if row:
-                cuid = row[0]
-                rows = await self.fetch(
-                    "SELECT platform_id FROM user_identities WHERE uid=?", (cuid,)
-                )
-                for r in rows:
-                    pid = r[0]
-                    if pid and pid not in related:
-                        # 去掉 qq: 前缀
-                        clean = pid.replace("qq:", "", 1) if pid.startswith("qq:") else pid
-                        if clean not in related:
-                            related.append(clean)
-                # 同时也查 canonical_users 的 primary_name
-                crow = await self.fetchone(
-                    "SELECT primary_name FROM canonical_users WHERE uid=?", (cuid,)
-                )
-                if crow and crow[0] and crow[0] not in related:
-                    related.append(crow[0])
+            import json
+            # 通过 user_identities JSON 查找
+            rows = await self.fetch("SELECT uid, platform_ids FROM user_identities")
+            for r in rows:
+                cuid = r[0]
+                pids = json.loads(r[1]) if r[1] else {}
+                for platform, ids in pids.items():
+                    for pid in ids:
+                        if pid == user_id or f"{platform}:{pid}" == user_id:
+                            if uid not in related:
+                                related.append(uid)
+                            # 收集该用户的所有平台 ID
+                            for p2, ids2 in pids.items():
+                                for pid2 in ids2:
+                                    if pid2 not in related:
+                                        related.append(pid2)
+                            break
+            # 查 names 数组
+            if related:
+                cuid = related[1] if len(related) > 1 else None
+                if cuid:
+                    crow = await self.fetchone(
+                        "SELECT names FROM canonical_users WHERE uid=?", (cuid,)
+                    )
+                    if crow and crow[0]:
+                        ns = json.loads(crow[0])
+                        for n in ns:
+                            if n not in related:
+                                related.append(n)
         except Exception:
             pass
 
@@ -572,87 +576,119 @@ class AtomStore(BaseDbStore, MemoryStore):
     #  身份体系（v2：canonical_users + user_identities）
     # ═══════════════════════════════════════════════════
 
-    async def ensure_canonical_user(self, platform_id: str, display_name: str = "",
-                                     platform: str = "qq") -> tuple[str, str]:
-        """确保用户存在 canonical_users + user_identities，返回 (uid, name)"""
-        import time
-        now = time.time()
-        name = display_name.strip() or platform_id
+    async def ensure_canonical_user(self, platform: str, platform_user_id: str,
+                                     display_name: str = "") -> tuple[str, list[str]]:
+        """确保用户存在，返回 (uid, names)
 
-        # 查是否已有此平台 ID
-        row = await self.fetchone(
-            "SELECT uid FROM user_identities WHERE platform_id = ?", (platform_id,)
-        )
-        if row:
-            uid = row[0]
-            # 更新名字和最后活跃
+        platform: "qq" / "webchat" / "weixin_oc"
+        platform_user_id: 用户在该平台上的 ID，如 "2398604399"
+        """
+        import json, time
+        now = time.time()
+        name = display_name.strip() or platform_user_id
+
+        # 查该平台+ID 是否已有绑定
+        uid = await self._find_uid_by_platform_id(platform, platform_user_id)
+        if uid:
+            # 更新名字（如果不在 names 里则追加）
+            row = await self.fetchone(
+                "SELECT names FROM canonical_users WHERE uid=?", (uid,)
+            )
+            names = json.loads(row[0]) if row and row[0] else []
+            if name and name not in names:
+                names.append(name)
             await self.execute(
-                "UPDATE user_identities SET display_name=?, last_seen=? WHERE platform_id=?",
-                (name, now, platform_id),
+                "UPDATE canonical_users SET names=?, updated_at=? WHERE uid=?",
+                (json.dumps(names, ensure_ascii=False), now, uid),
             )
             await self.execute(
-                "UPDATE canonical_users SET primary_name=?, updated_at=? WHERE uid=?",
-                (name, now, uid),
+                "UPDATE user_identities SET last_seen=?, source='auto' WHERE uid=?",
+                (now, uid),
             )
-            return uid, name
+            return uid, names
 
         # 创建新 UID
         import uuid
         uid = "u_" + uuid.uuid4().hex[:12]
+        names = [name] if name else []
+        platform_ids = {platform: [platform_user_id]}
         await self.execute(
-            "INSERT INTO canonical_users (uid, primary_name, created_at, updated_at) VALUES (?,?,?,?)",
-            (uid, name, now, now),
+            "INSERT INTO canonical_users (uid, names, created_at, updated_at) VALUES (?,?,?,?)",
+            (uid, json.dumps(names, ensure_ascii=False), now, now),
         )
         await self.execute(
-            "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen, last_seen, source) VALUES (?,?,?,?,?,?,?)",
-            (platform_id, uid, platform, name, now, now, "auto"),
+            "INSERT INTO user_identities (uid, platform_ids, first_seen, last_seen, source) VALUES (?,?,?,?,?)",
+            (uid, json.dumps(platform_ids, ensure_ascii=False), now, now, "auto"),
         )
-        return uid, name
+        return uid, names
+
+    async def _find_uid_by_platform_id(self, platform: str, platform_user_id: str) -> str | None:
+        """JSON 中查找 platform→user_id 对应的 uid"""
+        import json
+        # 遍历所有 user_identities，匹配 platform 数组中的 ID
+        rows = await self.fetch("SELECT uid, platform_ids FROM user_identities")
+        for uid, pids_json in rows:
+            if not pids_json:
+                continue
+            try:
+                pids = json.loads(pids_json)
+                ids = pids.get(platform, [])
+                if platform_user_id in ids:
+                    return uid
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return None
 
     async def init_bot_identity(self, bot_name: str = "Hana"):
         """初始化 bot 自己的身份（启动时调用）"""
-        import time
+        import json, time
         now = time.time()
         row = await self.fetchone(
             "SELECT uid FROM canonical_users WHERE uid='bot_hana'"
         )
         if not row:
+            names = json.dumps([bot_name], ensure_ascii=False)
+            platform_ids = json.dumps({"memori": [bot_name]}, ensure_ascii=False)
             await self.execute(
-                "INSERT INTO canonical_users (uid, primary_name, created_at, updated_at) VALUES ('bot_hana',?,?,?)",
-                (bot_name, now, now),
+                "INSERT INTO canonical_users (uid, names, created_at, updated_at) VALUES ('bot_hana',?,?,?)",
+                (names, now, now),
             )
             await self.execute(
-                "INSERT INTO user_identities (platform_id, uid, platform, display_name, first_seen,last_seen,verified,source) VALUES (?,?,?,?,?,?,1,'system')",
-                (f"bot:{bot_name}", "bot_hana", "memori", bot_name, now, now),
+                "INSERT INTO user_identities (uid, platform_ids, first_seen,last_seen,verified,source) VALUES (?,?,?,?,1,'system')",
+                ("bot_hana", platform_ids, now, now),
             )
 
     # ═══════════════════════════════════════════════════
     #  身份统一查询（canonical_users + user_identities）
     # ═══════════════════════════════════════════════════
 
-    async def resolve_identity(self, platform_id: str) -> tuple[str, str] | None:
-        """platform_id → (uid, display_name)，JOIN 一次查询"""
+    async def resolve_identity(self, platform: str, platform_user_id: str) -> tuple[str, list[str]] | None:
+        """(platform, user_id) → (uid, names)，查不到返回 None"""
         try:
-            row = await self.fetchone("""
-                SELECT i.uid, COALESCE(u.primary_name, '')
-                FROM user_identities i
-                JOIN canonical_users u ON i.uid = u.uid
-                WHERE i.platform_id = ?
-            """, (platform_id,))
-            if row and row[0]:
-                return (row[0], row[1])
+            uid = await self._find_uid_by_platform_id(platform, platform_user_id)
+            if uid:
+                row = await self.fetchone(
+                    "SELECT names FROM canonical_users WHERE uid=?", (uid,)
+                )
+                if row:
+                    import json
+                    names = json.loads(row[0]) if row[0] else []
+                    return (uid, names)
         except Exception:
-            logger.exception(f"[AtomStore] resolve_identity({platform_id}) 异常")
+            logger.exception(f"[AtomStore] resolve_identity({platform}:{platform_user_id}) 异常")
         return None
 
     async def resolve_display_name(self, uid: str) -> str:
-        """uid → primary_name，查不到返回 '用户' + uid 后 4 位"""
+        """uid → names[0]，查不到返回 '用户' + uid 后 4 位"""
         try:
             row = await self.fetchone(
-                "SELECT primary_name FROM canonical_users WHERE uid=?", (uid,)
+                "SELECT names FROM canonical_users WHERE uid=?", (uid,)
             )
             if row and row[0]:
-                return row[0]
+                import json
+                names = json.loads(row[0])
+                if names and len(names) > 0:
+                    return names[0]
         except Exception:
             logger.exception(f"[AtomStore] resolve_display_name({uid}) 异常")
         return f"用户{uid[-4:]}" if len(uid) >= 4 else "用户"
@@ -724,8 +760,8 @@ class AtomStore(BaseDbStore, MemoryStore):
     async def get_all_persona_embeddings(self) -> list[dict]:
         """获取所有有 embedding 的用户画像（供梦境相似检测用）"""
         rows = await self.fetch("""
-            SELECT cp.uid, cp.primary_name, up.persona_embedding, up.embedding_model,
-                   up.summary, up.tags, cp.identity_confidence
+            SELECT cp.uid, cp.names, up.persona_embedding, up.embedding_model,
+                   up.summary, up.tags, cp.confidence
             FROM canonical_users cp
             JOIN user_persona up ON cp.uid = up.uid
             WHERE up.persona_embedding IS NOT NULL AND up.persona_embedding != ''
@@ -737,9 +773,11 @@ class AtomStore(BaseDbStore, MemoryStore):
                 emb = json.loads(r[2].decode("utf-8")) if isinstance(r[2], bytes) else json.loads(r[2])
             except (json.JSONDecodeError, Exception):
                 emb = []
+            names = json.loads(r[1]) if r[1] else []
+            primary = names[0] if names else r[0]
             result.append({
                 "uid": r[0],
-                "primary_name": r[1] or r[0],
+                "primary_name": primary,
                 "embedding": emb,
                 "embedding_model": r[3] or "",
                 "summary": (r[4] or "")[:200],
@@ -753,14 +791,16 @@ class AtomStore(BaseDbStore, MemoryStore):
     async def list_users_with_persona(self) -> list[dict]:
         """用户列表（含画像数据）"""
         rows = await self.fetch("""
-            SELECT cp.uid, cp.primary_name, cp.identity_confidence,
+            SELECT cp.uid, cp.names, cp.confidence,
                    up.tier, up.summary, up.last_full_update
             FROM canonical_users cp
             LEFT JOIN user_persona up ON cp.uid = up.uid
             ORDER BY up.last_full_update DESC
         """)
+        import json
         return [{
-            "uid": r[0], "name": r[1] or r[0], "identity_confidence": r[2],
+            "uid": r[0], "name": (json.loads(r[1])[0] if r[1] else r[0]) or r[0],
+            "identity_confidence": r[2],
             "tier": r[3] or "new", "summary": (r[4] or "")[:100],
             "last_active": r[5],
         } for r in rows]

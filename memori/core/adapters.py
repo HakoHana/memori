@@ -214,14 +214,18 @@ class CoreUserIdentityResolver:
     async def resolve_display_name(self, display_name: str) -> str | None:
         if not display_name or not self._store:
             return None
+        import json
         try:
-            row = await self._store.fetchone(
-                "SELECT uid FROM user_identities WHERE display_name=? LIMIT 1",
-                (display_name,),
-            )
-            return row[0] if row else None
+            rows = await self._store.fetch("SELECT uid, names FROM canonical_users")
+            for uid, names_json in rows:
+                if not names_json:
+                    continue
+                ns = json.loads(names_json)
+                if display_name in ns:
+                    return uid
         except Exception:
             return None
+        return None
 
     async def get_persona_summary(self, uid: str) -> str:
         if not uid or not self._store:
@@ -237,21 +241,38 @@ class CoreUserIdentityResolver:
     async def get_persona_full(self, display_name: str) -> dict | None:
         if not display_name or not self._store:
             return None
+        import json
         try:
-            uid_row = await self._store.fetchone(
-                "SELECT uid FROM user_identities WHERE display_name=? LIMIT 1",
-                (display_name,),
+            # 从 names 数组中查找
+            row = await self._store.fetchone(
+                "SELECT uid, names FROM canonical_users WHERE names LIKE ?",
+                (f'%{display_name}%',),
             )
-            if not uid_row:
-                return None
-            uid = uid_row[0]
+            if not row:
+                # 精确匹配
+                all_rows = await self._store.fetch("SELECT uid, names FROM canonical_users")
+                uid = None
+                for r in all_rows:
+                    if not r[1]:
+                        continue
+                    try:
+                        ns = json.loads(r[1])
+                        if display_name in ns:
+                            uid = r[0]
+                            break
+                    except Exception:
+                        continue
+                if not uid:
+                    return None
+            else:
+                uid = row[0]
+
             persona = await self._store.fetchone(
-                "SELECT summary, tags, tier, primary_name FROM user_persona WHERE uid=?",
+                "SELECT summary, tags, tier FROM user_persona WHERE uid=?",
                 (uid,),
             )
             if not persona:
                 return {"uid": uid, "summary": "", "tags": [], "tier": "new"}
-            import json
             tags = []
             if persona[1]:
                 try:
@@ -263,7 +284,7 @@ class CoreUserIdentityResolver:
                 "summary": persona[0] or "",
                 "tags": tags,
                 "tier": persona[2] or "new",
-                "name": persona[3] or display_name,
+                "name": display_name,
             }
         except Exception:
             return None

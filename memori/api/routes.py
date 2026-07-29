@@ -423,7 +423,7 @@ async def trigger_decay(core: MemoryCore = Depends(get_core)):
 # ═══════════════════════════════════════════════════════════
 
 _CONFIG_META = {
-    "bot_name": {"type": "string", "default": "Hana", "label": "Bot 名称", "group": "基础",
+    "bot_name": {"type": "string", "default": "", "label": "Bot 名称", "group": "基础",
                  "hint": "在对话和记忆中使用的名称"},
     "llm_provider_id": {"type": "string", "default": "", "label": "主模型", "group": "基础",
                         "hint": "用于记忆整理（写日记/提取原子）的 LLM 配置名。在下方「模型提供商」中配置"},

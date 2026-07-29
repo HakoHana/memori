@@ -213,7 +213,7 @@ class MemoryCore:
         # Bot 身份
         if self.atom_store:
             try:
-                bot_name = self.config.get("bot_name", "Hana")
+                bot_name = self.config.get("bot_name", "")
                 await self.atom_store.init_bot_identity(bot_name)
             except Exception as e:
                 logger.warning(f"[Memoria] 初始化 bot 身份失败: {e}")

@@ -348,7 +348,7 @@ class Retriever(IRetriever):
         now = time.time()
 
         # 原子内容中的 bot 名统一替换为第一人称
-        bot_name = self.config.get("bot_name", "Hana")
+        bot_name = self.config.get("bot_name", "")
 
         def _replace_bot(text: str) -> str:
             for old in (bot_name, "Bot"):

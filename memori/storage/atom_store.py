@@ -639,7 +639,7 @@ class AtomStore(BaseDbStore, MemoryStore):
                 continue
         return None
 
-    async def init_bot_identity(self, bot_name: str = "Hana"):
+    async def init_bot_identity(self, bot_name: str = ""):
         """初始化 bot 自己的身份（启动时调用）"""
         import json, time
         now = time.time()

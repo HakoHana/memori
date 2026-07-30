@@ -58,14 +58,26 @@ class MemoriPlugin(Star):
             if pm and hasattr(pm, "providers_config"):
                 astrbot_providers = []
                 for pc in pm.providers_config:
+                    ptype = pc.get("provider_type", "")
                     keys = pc.get("key", [])
                     api_key = keys[0] if isinstance(keys, list) and keys else ""
-                    astrbot_providers.append({
-                        "name": pc.get("id", ""),
-                        "api_base": pc.get("api_base", ""),
-                        "api_key": api_key,
-                        "model": pc.get("model", "") or "",
-                    })
+
+                    if ptype == "embedding":
+                        # Embedding 提供商：type → embed:api
+                        astrbot_providers.append({
+                            "name": pc.get("id", ""),
+                            "type": "embed:api",
+                            "api_base": pc.get("embedding_api_base", pc.get("api_base", "")),
+                            "api_key": pc.get("embedding_api_key", api_key),
+                            "model": pc.get("embedding_model", pc.get("model", "")),
+                        })
+                    else:
+                        astrbot_providers.append({
+                            "name": pc.get("id", ""),
+                            "api_base": pc.get("api_base", ""),
+                            "api_key": api_key,
+                            "model": pc.get("model", "") or "",
+                        })
                 if astrbot_providers:
                     self.core.config.setdefault("_providers", [])
                     existing = {p["name"] for p in self.core.config["_providers"]}
@@ -78,7 +90,7 @@ class MemoriPlugin(Star):
                         else:
                             self.core.config["_providers"].append(p)
                     self.core.reload_config(self.core.config)
-                    logger.info(f"[memori] 已同步 {len(astrbot_providers)} 个 LLM 提供商")
+                    logger.info(f"[memori] 已同步 {len(astrbot_providers)} 个提供商")
         except Exception as e:
             logger.warning(f"[memori] 同步 LLM 提供商失败: {e}")
 

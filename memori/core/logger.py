@@ -15,7 +15,7 @@ if not logger.handlers:
     handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(logging.Formatter(
-        "[Memoria] %(levelname)s %(message)s"
+        "[memori] %(levelname)s %(message)s"
     ))
     logger.addHandler(handler)
     logger.propagate = False

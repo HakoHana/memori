@@ -75,7 +75,7 @@ async function loadAll() {
     html += '<div class="card"><h2> 模型提供商</h2>';
     html += '<div class="hint" style="margin-bottom:8px">在「基础」中选用的 ID 需与此处一致</div>';
     html += '<table class="prov-table"><thead><tr>';
-    html += '<th style="width:18%">ID</th><th style="width:28%">API 地址</th><th style="width:28%">API Key</th><th style="width:18%">模型</th><th style="width:8%"></th>';
+    html += '<th style="width:14%">ID</th><th style="width:12%">类型</th><th style="width:24%">API 地址</th><th style="width:24%">API Key</th><th style="width:18%">模型</th><th style="width:8%"></th>';
     html += '</tr></thead><tbody id="prov_tbody"></tbody></table>';
     html += '<button class="btn-sm" onclick="addProv()">+ 添加</button></div>';
     document.getElementById('app').innerHTML = html;
@@ -90,12 +90,15 @@ async function loadProvs() {
     tb.innerHTML = '';
     for (const p of data.providers || []) addProvRow(p);
 }
-function addProv() { addProvRow({ name: '', api_base: '', api_key: '', model: '' }); }
+function addProv() { addProvRow({ name: '', type: 'llm', api_base: '', api_key: '', model: '' }); }
 function addProvRow(p) {
     const tb = document.getElementById('prov_tbody');
     const tr = document.createElement('tr');
+    const typeOptions = ['llm','embed:ollama','embed:api','embed:local'];
+    const typeSel = typeOptions.map(t => `<option value="${t}" ${(p.type||'llm')===t?'selected':''}>${t}</option>`).join('');
     tr.innerHTML = `
         <td><input class="pv_n" value="${esc(p.name)}" placeholder="my-llm"></td>
+        <td><select class="pv_t" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:0.9em">${typeSel}</select></td>
         <td><input class="pv_b" value="${esc(p.api_base)}" placeholder="https://api.openai.com/v1"></td>
         <td><input class="pv_k" type="password" value="${esc(p.api_key)}"></td>
         <td><input class="pv_m" value="${esc(p.model)}" placeholder="gpt-4o"></td>
@@ -109,7 +112,8 @@ async function saveAll() {
     document.querySelectorAll('#prov_tbody tr').forEach(tr => {
         const name = tr.querySelector('.pv_n')?.value?.trim();
         if (!name) return;
-        providers.push({ name, api_base: tr.querySelector('.pv_b')?.value?.trim() || '',
+        providers.push({ name, type: tr.querySelector('.pv_t')?.value || 'llm',
+            api_base: tr.querySelector('.pv_b')?.value?.trim() || '',
             api_key: tr.querySelector('.pv_k')?.value || '', model: tr.querySelector('.pv_m')?.value?.trim() || '' });
     });
     await fetch('/api/v1/providers', {

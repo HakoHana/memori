@@ -50,30 +50,40 @@ class MemoriPlugin(Star):
             context_provider=ctx,
             data_dir=data_dir,
         )
-        await self.core.initialize()
 
-        # 从 AstrBot 同步 LLM 提供商配置
+        # 先同步 AstrBot 的 provider 列表，再初始化内核，
+        # 避免 _init_embed_provider 在 _providers 为空时找不到提供商
         try:
             pm = getattr(self.context, "provider_manager", None)
             if pm and hasattr(pm, "providers_config"):
                 astrbot_providers = []
                 for pc in pm.providers_config:
                     ptype = pc.get("provider_type", "")
+                    orig_type = pc.get("type", "")
                     keys = pc.get("key", [])
                     api_key = keys[0] if isinstance(keys, list) and keys else ""
+                    name = pc.get("id", "").strip()
 
                     if ptype == "embedding":
-                        # Embedding 提供商：type → embed:api
-                        astrbot_providers.append({
-                            "name": pc.get("id", ""),
-                            "type": "embed:api",
-                            "api_base": pc.get("embedding_api_base", pc.get("api_base", "")),
-                            "api_key": pc.get("embedding_api_key", api_key),
-                            "model": pc.get("embedding_model", pc.get("model", "")),
-                        })
+                        if orig_type == "ollama_embedding":
+                            astrbot_providers.append({
+                                "name": name,
+                                "type": "embed:ollama",
+                                "api_base": pc.get("embedding_api_base", "http://localhost:11434"),
+                                "api_key": "",
+                                "model": pc.get("embedding_model", "bge-m3"),
+                            })
+                        else:
+                            astrbot_providers.append({
+                                "name": name,
+                                "type": "embed:api",
+                                "api_base": pc.get("embedding_api_base", pc.get("api_base", "")),
+                                "api_key": pc.get("embedding_api_key", api_key),
+                                "model": pc.get("embedding_model", pc.get("model", "")),
+                            })
                     else:
                         astrbot_providers.append({
-                            "name": pc.get("id", ""),
+                            "name": name,
                             "api_base": pc.get("api_base", ""),
                             "api_key": api_key,
                             "model": pc.get("model", "") or "",
@@ -89,10 +99,11 @@ class MemoriPlugin(Star):
                                     break
                         else:
                             self.core.config["_providers"].append(p)
-                    self.core.reload_config(self.core.config)
                     logger.info(f"[memori] 已同步 {len(astrbot_providers)} 个提供商")
         except Exception as e:
             logger.warning(f"[memori] 同步 LLM 提供商失败: {e}")
+
+        await self.core.initialize()
 
         # 注册 Agent Tools（受配置开关控制）
         try:

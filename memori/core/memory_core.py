@@ -176,8 +176,8 @@ class MemoryCore:
                 await migration.initialize()
                 await migration.migrate()
             except Exception as e:
-                logger.warning(f"[Memoria] 数据库迁移失败 ({scope}): {e}")
-        logger.info("[Memoria] 数据库迁移完成")
+                logger.warning(f"[memori] 数据库迁移失败 ({scope}): {e}")
+        logger.info("[memori] 数据库迁移完成")
 
     async def _phase3_stores(self):
         """Phase 3: 存储层初始化"""
@@ -200,7 +200,7 @@ class MemoryCore:
         names = ["atom_store", "diary_store", "graph_store", "conversation_store", "write_op_log"]
         for name, result in zip(names, results):
             if isinstance(result, Exception):
-                logger.warning(f"[Memoria] {name} 初始化异常: {result}")
+                logger.warning(f"[memori] {name} 初始化异常: {result}")
 
     async def _phase4_data_recovery(self):
         """Phase 4: 数据恢复 + 旧数据迁移"""
@@ -208,7 +208,7 @@ class MemoryCore:
         try:
             await self.write_op_log.repair_on_startup()
         except Exception as e:
-            logger.warning(f"[Memoria] 写操作日志修复失败: {e}")
+            logger.warning(f"[memori] 写操作日志修复失败: {e}")
 
         # Bot 身份
         if self.atom_store:
@@ -216,13 +216,13 @@ class MemoryCore:
                 bot_name = self.config.get("bot_name", "")
                 await self.atom_store.init_bot_identity(bot_name)
             except Exception as e:
-                logger.warning(f"[Memoria] 初始化 bot 身份失败: {e}")
+                logger.warning(f"[memori] 初始化 bot 身份失败: {e}")
 
         # 旧数据迁移（memory.db → 分库）
         try:
             await self._maybe_copy_legacy_data(self._db_path)
         except Exception as e:
-            logger.warning(f"[Memoria] 旧数据迁移异常: {e}")
+            logger.warning(f"[memori] 旧数据迁移异常: {e}")
 
         # 索引检查（后台）
         task = asyncio.ensure_future(self._async_index_check(self._db_path))
@@ -287,11 +287,11 @@ class MemoryCore:
             try:
                 cleaned = await self.lifecycle.cleanup.cleanup_orphans()
                 if cleaned > 0:
-                    logger.info(f"[Memoria] 启动时清理了 {cleaned} 条孤立原子")
+                    logger.info(f"[memori] 启动时清理了 {cleaned} 条孤立原子")
             except Exception as e:
-                logger.warning(f"[Memoria] 启动孤立原子清理失败: {e}")
+                logger.warning(f"[memori] 启动孤立原子清理失败: {e}")
         except Exception as e:
-            logger.warning(f"[Memoria] 生命周期管理器初始化失败: {e}")
+            logger.warning(f"[memori] 生命周期管理器初始化失败: {e}")
 
         # Persona / Retriever / Injector
         self.persona_engine = PersonaEngine(
@@ -339,7 +339,7 @@ class MemoryCore:
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
             except Exception as e:
-                logger.warning(f"[Memoria] {name} 定时循环注册失败: {e}")
+                logger.warning(f"[memori] {name} 定时循环注册失败: {e}")
 
     async def _phase8_scheduler(self):
         """Phase 8: 调度器 + 指令处理器"""
@@ -374,7 +374,7 @@ class MemoryCore:
                 for name, r in results.items():
                     if name != "summary" and not r.get("passed", False):
                         for issue in r.get("issues", []):
-                            logger.warning(f"[Memoria] 索引检查: {issue}")
+                            logger.warning(f"[memori] 索引检查: {issue}")
 
             # 孤立原子检查
             if self.atom_store and self.diary_store:
@@ -393,12 +393,12 @@ class MemoryCore:
                             orphan_count += 1
                     if orphan_count > 0:
                         logger.warning(
-                            f"[Memoria] 孤立原子检查: {orphan_count} 条日记日期无对应日记"
+                            f"[memori] 孤立原子检查: {orphan_count} 条日记日期无对应日记"
                         )
                 except Exception:
                     pass
         except Exception as e:
-            logger.warning(f"[Memoria] 索引检查失败: {e}")
+            logger.warning(f"[memori] 索引检查失败: {e}")
 
     async def _lifecycle_loops(self):
         while not self._initialized:
@@ -414,7 +414,7 @@ class MemoryCore:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Memoria] 生命周期循环异常: {e}")
+                logger.warning(f"[memori] 生命周期循环异常: {e}")
                 await asyncio.sleep(3600)
 
     async def _maybe_copy_legacy_data(self, old_db: str):
@@ -497,7 +497,7 @@ class MemoryCore:
                                 pass
                         await dst.commit()
 
-                    logger.info(f"[Memoria] 旧数据迁移: {src_count} 行 → {Path(dest_path).name}/{table}")
+                    logger.info(f"[memori] 旧数据迁移: {src_count} 行 → {Path(dest_path).name}/{table}")
 
                     # 特殊处理：重建 diary FTS
                     if table == "diary_entries" and dest_store == self.diary_store:
@@ -511,9 +511,9 @@ class MemoryCore:
                             pass
 
                 except Exception as e:
-                    logger.warning(f"[Memoria] 旧数据迁移失败 {table}: {e}")
+                    logger.warning(f"[memori] 旧数据迁移失败 {table}: {e}")
 
-        logger.info("[Memoria] 旧数据迁移完成")
+        logger.info("[memori] 旧数据迁移完成")
 
     async def _cleanup_loop(self):
         """定时清理：对话滑动窗口"""
@@ -525,11 +525,11 @@ class MemoryCore:
                 if self.conversation_store:
                     deleted = await self.conversation_store.enforce_retention()
                     if deleted:
-                        logger.info(f"[Memoria] 对话滑动窗口清理: {deleted} 条")
+                        logger.info(f"[memori] 对话滑动窗口清理: {deleted} 条")
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Memoria] 清理异常: {e}")
+                logger.warning(f"[memori] 清理异常: {e}")
 
     async def _cooccur_loop(self):
         while not self._initialized:
@@ -540,11 +540,11 @@ class MemoryCore:
                 if not self.graph_engine:
                     continue
                 count = await self.graph_engine.batch_cooccur()
-                logger.info(f"[Memoria] co_occur 统计更新: {count} 条")
+                logger.info(f"[memori] co_occur 统计更新: {count} 条")
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Memoria] co_occur 更新异常: {e}")
+                logger.warning(f"[memori] co_occur 更新异常: {e}")
                 await asyncio.sleep(3600)
 
     # ═══════════════════════════════════════════════════
@@ -760,7 +760,7 @@ class MemoryCore:
             if self.reply_handler:
                 self.reply_handler(user_id, result)
         except Exception as e:
-            logger.warning(f"[Memoria] 指令处理失败 {cmd}: {e}")
+            logger.warning(f"[memori] 指令处理失败 {cmd}: {e}")
 
     async def destroy(self):
         """优雅关闭 — 停后台任务"""
@@ -774,7 +774,7 @@ class MemoryCore:
             try:
                 await self.embed_provider.close()
             except Exception as e:
-                logger.warning(f"[Memoria] 关闭嵌入提供者异常: {e}")
+                logger.warning(f"[memori] 关闭嵌入提供者异常: {e}")
             self.embed_provider = None
         # 同步清除下游引用
         if hasattr(self, "capturer") and self.capturer:
@@ -791,7 +791,7 @@ class MemoryCore:
         try:
             await BaseDbStore.close_all()
         except Exception as e:
-            logger.warning(f"[Memoria] 关闭连接池异常: {e}")
+            logger.warning(f"[memori] 关闭连接池异常: {e}")
             try:
                 BaseDbStore.close_all_sync()
             except Exception:

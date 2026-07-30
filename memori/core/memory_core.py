@@ -811,11 +811,17 @@ class MemoryCore:
             self.embed_provider = None
             return
 
-        from ..core.embed_providers import create_embed_provider
-
-        model_name = self.config.get("embed_model_name", "BAAI/bge-m3")
-        providers = self.config.get("_providers", [])
-        new_provider = create_embed_provider(embed_id, providers, model_name)
+        # Special shortcut: ollama-bge reads config fields directly, bypassing _providers
+        if embed_id == "ollama-bge":
+            from ..core.embed_providers import OllamaEmbeddingProvider
+            api_base = self.config.get("embed_ollama_api_base", "http://localhost:11434")
+            model = self.config.get("embed_ollama_model", "bge-m3")
+            new_provider = OllamaEmbeddingProvider(api_base=api_base, model=model)
+        else:
+            from ..core.embed_providers import create_embed_provider
+            model_name = self.config.get("embed_model_name", "BAAI/bge-m3")
+            providers = self.config.get("_providers", [])
+            new_provider = create_embed_provider(embed_id, providers, model_name)
 
         if new_provider is not None:
             self.embed_provider = new_provider

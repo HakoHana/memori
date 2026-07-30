@@ -40,5 +40,23 @@
     "description": "召回上下文消息数",
     "default": 5,
     "hint": "召回记忆时取最近 N 条消息作为查询上下文（0=仅用当前消息）"
+  },
+  "embed_provider_id": {
+    "type": "string",
+    "description": "嵌入向量提供商 ID",
+    "default": "",
+    "hint": "设为 ollama-bge 使用本地 ollama bge-m3"
+  },
+  "embed_ollama_api_base": {
+    "type": "string",
+    "description": "Ollama API 地址",
+    "default": "http://localhost:11434",
+    "hint": "embed_provider_id 为 ollama-bge 时使用"
+  },
+  "embed_ollama_model": {
+    "type": "string",
+    "description": "Ollama 嵌入模型名",
+    "default": "bge-m3",
+    "hint": "embed_provider_id 为 ollama-bge 时使用"
   }
 }
